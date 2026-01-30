@@ -5,7 +5,6 @@
 import os
 import sys
 from pathlib import Path
-import shutil
 import streamlit as st
 import numpy as np
 from PIL import Image
@@ -32,7 +31,7 @@ from tensorflow.keras.applications.mobilenet_v2 import preprocess_input
 # CONFIG / FEATURE FLAGS
 # ======================================================
 IS_CLOUD = os.getenv("STREAMLIT_CLOUD", "false").lower() == "true"
-ENABLE_BLIP = not IS_CLOUD  # BLIP disabled in cloud for stability
+ENABLE_BLIP = not IS_CLOUD  # BLIP disabled in cloud
 
 # Feedback paths
 FEEDBACK_CSV = ROOT_DIR / "feedback_log.csv"
@@ -69,11 +68,24 @@ Upload an image to see:
 # ======================================================
 # IMAGE UPLOAD
 # ======================================================
-uploaded_file = st.file_uploader(
-    "Upload an image", type=["jpg", "jpeg", "png"]
-)
+uploaded_file = st.file_uploader("Upload an image", type=["jpg", "jpeg", "png"])
 
 if uploaded_file is not None:
+
+    # -----------------------------
+    # Reset feedback for new image
+    # -----------------------------
+    if "last_uploaded_file" not in st.session_state:
+        st.session_state.last_uploaded_file = uploaded_file.name
+    if "feedback_submitted" not in st.session_state:
+        st.session_state.feedback_submitted = False
+    if "feedback" not in st.session_state:
+        st.session_state.feedback = None
+
+    if st.session_state.last_uploaded_file != uploaded_file.name:
+        st.session_state.feedback_submitted = False
+        st.session_state.feedback = None
+        st.session_state.last_uploaded_file = uploaded_file.name
 
     # -----------------------------
     # Load and display image
@@ -124,9 +136,6 @@ Highlighted regions indicate which parts of the image most influenced the modelâ
     # -----------------------------
     st.subheader("ðŸ§  Feedback")
 
-    if "feedback_submitted" not in st.session_state:
-        st.session_state.feedback_submitted = False
-
     if not st.session_state.feedback_submitted:
 
         correct = st.radio(
@@ -157,9 +166,7 @@ Highlighted regions indicate which parts of the image most influenced the modelâ
             if user_label is None or user_label.strip() == "":
                 st.warning("Please provide a valid label.")
             else:
-                # -----------------------------
-                # Save image locally for retraining
-                # -----------------------------
+                # Save image locally
                 img_filename = uploaded_file.name
                 img_save_path = FEEDBACK_IMG_DIR / img_filename
                 try:
@@ -167,9 +174,7 @@ Highlighted regions indicate which parts of the image most influenced the modelâ
                 except Exception as e:
                     st.warning(f"Could not save image: {e}")
 
-                # -----------------------------
-                # Append feedback to CSV
-                # -----------------------------
+                # Save feedback to CSV
                 feedback_entry = {
                     "uploaded_filename": img_filename,
                     "model_prediction": preds[0][0],
@@ -187,13 +192,13 @@ Highlighted regions indicate which parts of the image most influenced the modelâ
 
                 st.session_state.feedback = feedback_entry
                 st.session_state.feedback_submitted = True
-                st.success("Thanks! Your feedback has been recorded and saved for retraining.")
+                st.success("Thanks! Your feedback has been recorded.")
 
     else:
         st.info("Feedback already submitted for this image.")
 
     # Optional: show feedback
-    if "feedback" in st.session_state:
+    if st.session_state.feedback:
         with st.expander("View recorded feedback"):
             st.json(st.session_state.feedback)
 
