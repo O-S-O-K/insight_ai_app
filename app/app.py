@@ -2,6 +2,10 @@ import os
 import streamlit as st
 import numpy as np
 from PIL import Image
+import sys
+from pathlib import Path
+ROOT_DIR = Path(__file__).parents[1]
+sys.path.append(str(ROOT_DIR))
 
 from utils.gradcam import (
     load_cnn_model,
