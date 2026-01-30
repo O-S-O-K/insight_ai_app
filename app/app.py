@@ -151,16 +151,18 @@ Highlighted regions indicate which parts of the image most influenced the modelâ
     )
 
     # -----------------------------
-    # Feedback
+    # Feedback (unique keys per image)
     # -----------------------------
     st.subheader("ðŸ§  Feedback")
 
     if not st.session_state.feedback_submitted:
+        base_key = f"feedback_{img_hash}"
 
         correct = st.radio(
             "Was the modelâ€™s top prediction correct?",
             ["Yes", "No"],
             horizontal=True,
+            key=f"{base_key}_correct"
         )
 
         user_label = None
@@ -173,15 +175,20 @@ Highlighted regions indicate which parts of the image most influenced the modelâ
             options = top_labels[1:] + ["Other"]
 
             selection = st.radio(
-                "Select one of the alternatives or choose *Other*", options
+                "Select one of the alternatives or choose *Other*",
+                options,
+                key=f"{base_key}_selection"
             )
 
             if selection == "Other":
-                user_label = st.text_input("Enter the correct label")
+                user_label = st.text_input(
+                    "Enter the correct label",
+                    key=f"{base_key}_text"
+                )
             else:
                 user_label = selection
 
-        if st.button("Submit Feedback"):
+        if st.button("Submit Feedback", key=f"{base_key}_submit"):
             if user_label is None or user_label.strip() == "":
                 st.warning("Please provide a valid label.")
             else:
