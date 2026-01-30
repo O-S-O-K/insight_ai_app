@@ -9,6 +9,7 @@ import streamlit as st
 import numpy as np
 from PIL import Image
 import pandas as pd
+import hashlib
 
 # -----------------------------
 # Path safety for utils package
@@ -38,6 +39,16 @@ FEEDBACK_IMG_DIR = ROOT_DIR / "feedback_images"
 FEEDBACK_IMG_DIR.mkdir(exist_ok=True)
 
 st.set_page_config(page_title="InsightAI", layout="wide")
+
+# ======================================================
+# HELPERS
+# ======================================================
+def get_file_hash(uploaded_file):
+    """Generate MD5 hash for uploaded file bytes"""
+    uploaded_file.seek(0)
+    file_bytes = uploaded_file.read()
+    uploaded_file.seek(0)
+    return hashlib.md5(file_bytes).hexdigest()
 
 # ======================================================
 # LOAD MODEL
@@ -70,26 +81,25 @@ uploaded_file = st.file_uploader("Upload an image", type=["jpg", "jpeg", "png"])
 
 if uploaded_file is not None:
     # -----------------------------
-    # Feedback reset logic (fully fixed)
+    # Compute image hash
     # -----------------------------
-    if "last_uploaded_file_name" not in st.session_state:
-        st.session_state.last_uploaded_file_name = ""
-    if "last_uploaded_file_object" not in st.session_state:
-        st.session_state.last_uploaded_file_object = None
+    img_hash = get_file_hash(uploaded_file)
+
+    # -----------------------------
+    # Initialize session state
+    # -----------------------------
+    if "last_image_hash" not in st.session_state:
+        st.session_state.last_image_hash = None
     if "feedback_submitted" not in st.session_state:
         st.session_state.feedback_submitted = False
     if "feedback" not in st.session_state:
         st.session_state.feedback = None
 
-    # Reset feedback if a new image is uploaded
-    if (
-        st.session_state.last_uploaded_file_name != uploaded_file.name
-        or st.session_state.last_uploaded_file_object != uploaded_file
-    ):
+    # Reset feedback if new image uploaded
+    if st.session_state.last_image_hash != img_hash:
         st.session_state.feedback_submitted = False
         st.session_state.feedback = None
-        st.session_state.last_uploaded_file_name = uploaded_file.name
-        st.session_state.last_uploaded_file_object = uploaded_file
+        st.session_state.last_image_hash = img_hash
 
     # -----------------------------
     # Load and display image
@@ -98,15 +108,20 @@ if uploaded_file is not None:
     st.image(img, caption="Uploaded Image", use_column_width=True)
 
     # -----------------------------
-    # Top-3 predictions
+    # Top-3 predictions (cache tied to image hash)
     # -----------------------------
-    preds = predict_image(model, img, top=3)
+    @st.cache_resource
+    def predict_image_cached(model, img_hash, img):
+        return predict_image(model, img, top=3)
+
+    preds = predict_image_cached(model, img_hash, img)
+
     st.subheader("🔍 Top Predictions")
     for i, (label, score) in enumerate(preds, start=1):
         st.write(f"{i}. **{label}** — {score * 100:.2f}%")
 
     # -----------------------------
-    # Grad-CAM
+    # Grad-CAM overlay
     # -----------------------------
     st.subheader("🔥 Grad-CAM Explanation")
     img_resized = img.resize((224, 224))
@@ -136,7 +151,7 @@ Highlighted regions indicate which parts of the image most influenced the model�
     )
 
     # -----------------------------
-    # Feedback (Human-in-the-loop)
+    # Feedback
     # -----------------------------
     st.subheader("🧠 Feedback")
 
@@ -207,13 +222,16 @@ Highlighted regions indicate which parts of the image most influenced the model�
             st.json(st.session_state.feedback)
 
     # -----------------------------
-    # BLIP Caption
+    # BLIP Caption (cache tied to image hash)
     # -----------------------------
     st.subheader("📝 Image Caption")
 
     if ENABLE_BLIP:
-        with st.spinner("Generating image caption..."):
-            caption = generate_blip_caption(img)
+        @st.cache_resource
+        def generate_blip_caption_cached(img_hash, img):
+            return generate_blip_caption(img)
+
+        caption = generate_blip_caption_cached(img_hash, img)
 
         if caption:
             st.write(caption)
