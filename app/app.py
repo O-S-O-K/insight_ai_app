@@ -24,7 +24,6 @@ from utils.gradcam import (
     overlay_heatmap,
 )
 from utils.blip_caption import generate_blip_caption
-
 from tensorflow.keras.applications.mobilenet_v2 import preprocess_input
 
 # ======================================================
@@ -54,7 +53,6 @@ model = load_model()
 # ======================================================
 st.title("🧠 InsightAI")
 st.subheader("Explainable Image Classification with Human Feedback")
-
 st.markdown(
     """
 Upload an image to see:
@@ -71,21 +69,27 @@ Upload an image to see:
 uploaded_file = st.file_uploader("Upload an image", type=["jpg", "jpeg", "png"])
 
 if uploaded_file is not None:
-
     # -----------------------------
-    # Reset feedback for new image
+    # Feedback reset logic (fully fixed)
     # -----------------------------
-    if "last_uploaded_file" not in st.session_state:
-        st.session_state.last_uploaded_file = uploaded_file.name
+    if "last_uploaded_file_name" not in st.session_state:
+        st.session_state.last_uploaded_file_name = ""
+    if "last_uploaded_file_object" not in st.session_state:
+        st.session_state.last_uploaded_file_object = None
     if "feedback_submitted" not in st.session_state:
         st.session_state.feedback_submitted = False
     if "feedback" not in st.session_state:
         st.session_state.feedback = None
 
-    if st.session_state.last_uploaded_file != uploaded_file.name:
+    # Reset feedback if a new image is uploaded
+    if (
+        st.session_state.last_uploaded_file_name != uploaded_file.name
+        or st.session_state.last_uploaded_file_object != uploaded_file
+    ):
         st.session_state.feedback_submitted = False
         st.session_state.feedback = None
-        st.session_state.last_uploaded_file = uploaded_file.name
+        st.session_state.last_uploaded_file_name = uploaded_file.name
+        st.session_state.last_uploaded_file_object = uploaded_file
 
     # -----------------------------
     # Load and display image
