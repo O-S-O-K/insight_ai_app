@@ -105,5 +105,5 @@ st.markdown(
     in real-world deployment settings.
     """
 )
-
+st.caption("Author: Sheron Schley / github.com/O-S-O-K")
 st.caption("© Insight AI · Explainable Vision with Human-in-the-Loop Feedback")
