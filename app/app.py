@@ -144,7 +144,7 @@ The highlighted regions indicate which parts of the image most influenced the mo
     # ------------------------------
     # BLIP Caption (Optional)
     # ------------------------------
-    st.subheader("📝 Image Caption")
+st.subheader("📝 Image Caption")
 
     if ENABLE_BLIP:
         with st.spinner("Generating image caption..."):
