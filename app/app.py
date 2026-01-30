@@ -69,11 +69,40 @@ if uploaded_file is not None:
     # ------------------------------
     # Prediction
     # ------------------------------
-    preds = predict_image(model, img)
+    preds = predict_image(model, img, top=3)
 
     st.subheader("🔍 Top Predictions")
-    for label, score in preds:
-        st.write(f"**{label}** — {score*100:.2f}%")
+    for i, (label, score) in enumerate(preds, start=1):
+        st.write(f"{i}. **{label}** — {score*100:.2f}%")
+
+    st.subheader("🧠 Feedback")
+
+if "feedback_submitted" not in st.session_state:
+    st.session_state.feedback_submitted = False
+
+if not st.session_state.feedback_submitted:
+    correct = st.radio(
+        "Was the model’s top prediction correct?",
+        ["Yes", "No"],
+        horizontal=True,
+    )
+
+    if correct == "No":
+        user_label = st.text_input(
+            "What should the correct label be?"
+        )
+    else:
+        user_label = preds[0][0]
+
+    if st.button("Submit Feedback"):
+        st.session_state.feedback = {
+            "top_prediction": preds[0][0],
+            "user_label": user_label,
+        }
+        st.session_state.feedback_submitted = True
+        st.success("Thanks! Your feedback has been recorded.")
+else:
+    st.info("Feedback already submitted for this image.")
 
     # ------------------------------
     # Grad-CAM
