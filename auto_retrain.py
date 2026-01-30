@@ -1,26 +1,37 @@
 """
 auto_retrain.py
 
-Checks if enough new feedback exists and retrains the CNN model if threshold is met.
+Semi-automatic retraining of the CNN based on new feedback collected
+from the InsightAI app.
 """
 
 from pathlib import Path
 import pandas as pd
-from retrain_cnn import ROOT_DIR, FEEDBACK_CSV, FEEDBACK_IMG_DIR, MODEL_PATH, FINETUNED_MODEL_PATH
-from retrain_cnn import load_model, Image, np, to_categorical, LabelEncoder, img_to_array, Adam
+from tensorflow.keras.models import load_model
+from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.preprocessing.image import img_to_array
+from tensorflow.keras.utils import to_categorical
+from sklearn.preprocessing import LabelEncoder
+from PIL import Image
+import numpy as np
 
 # -----------------------------
-# CONFIG
+# Paths
 # -----------------------------
-MIN_NEW_FEEDBACK = 50  # minimum number of new feedback entries to trigger retraining
+ROOT_DIR = Path(__file__).resolve().parents[0]
+FEEDBACK_CSV = ROOT_DIR / "feedback_log.csv"
+FEEDBACK_IMG_DIR = ROOT_DIR / "feedback_images"
+MODEL_PATH = ROOT_DIR / "models/cnn_model.h5"
+FINETUNED_MODEL_PATH = ROOT_DIR / "models/cnn_model_finetuned.h5"
 LAST_RETRAIN_FILE = ROOT_DIR / "last_retrain.txt"
 
 # -----------------------------
-# Check last retrain
+# Config
 # -----------------------------
-last_retrain_count = 0
-if LAST_RETRAIN_FILE.exists():
-    last_retrain_count = int(LAST_RETRAIN_FILE.read_text().strip())
+MIN_NEW_FEEDBACK = 50  # minimum new entries to trigger retraining
+EPOCHS = 5
+BATCH_SIZE = 8
+IMG_SIZE = (224, 224)
 
 # -----------------------------
 # Load feedback
@@ -30,23 +41,29 @@ if not FEEDBACK_CSV.exists():
     exit(0)
 
 df = pd.read_csv(FEEDBACK_CSV)
-new_feedback_count = len(df) - last_retrain_count
+total_feedback = len(df)
 
+# Load last retrain counter
+last_count = 0
+if LAST_RETRAIN_FILE.exists():
+    last_count = int(LAST_RETRAIN_FILE.read_text().strip())
+
+new_feedback_count = total_feedback - last_count
 if new_feedback_count < MIN_NEW_FEEDBACK:
     print(f"Not enough new feedback ({new_feedback_count}/{MIN_NEW_FEEDBACK}). Exiting.")
     exit(0)
 
-print(f"New feedback detected: {new_feedback_count}. Retraining now...")
+print(f"Detected {new_feedback_count} new feedback entries. Retraining...")
 
 # -----------------------------
-# Prepare data
+# Prepare training data
 # -----------------------------
 X, y = [], []
 for _, row in df.iterrows():
     img_path = FEEDBACK_IMG_DIR / row["uploaded_filename"]
     if img_path.exists():
-        img = Image.open(img_path).resize((224, 224))
-        X.append(img_to_array(img) / 255.0)
+        img = Image.open(img_path).resize(IMG_SIZE)
+        X.append(img_to_array(img)/255.0)
         y.append(row["user_label"])
 
 if len(X) == 0:
@@ -56,35 +73,35 @@ if len(X) == 0:
 X = np.array(X)
 le = LabelEncoder()
 y_encoded = le.fit_transform(y)
-num_classes = len(le.classes_)
-y_categorical = to_categorical(y_encoded, num_classes=num_classes)
+y_categorical = to_categorical(y_encoded, num_classes=len(le.classes_))
 
 # -----------------------------
-# Load model
+# Load and compile model
 # -----------------------------
 if not MODEL_PATH.exists():
-    print(f"Original CNN model not found at {MODEL_PATH}. Exiting.")
+    print(f"Original model not found at {MODEL_PATH}. Exiting.")
     exit(0)
 
 model = load_model(MODEL_PATH)
 model.compile(optimizer=Adam(1e-4), loss="categorical_crossentropy", metrics=["accuracy"])
+print("Loaded original model.")
 
 # -----------------------------
-# Train / fine-tune
+# Fine-tune
 # -----------------------------
 model.fit(
     X,
     y_categorical,
-    epochs=5,
-    batch_size=8,
+    epochs=EPOCHS,
+    batch_size=BATCH_SIZE,
     validation_split=0.2,
-    shuffle=True,
+    shuffle=True
 )
 model.save(FINETUNED_MODEL_PATH)
 print(f"Fine-tuned model saved at {FINETUNED_MODEL_PATH}")
 
 # -----------------------------
-# Update last retrain counter
+# Update retrain counter
 # -----------------------------
-LAST_RETRAIN_FILE.write_text(str(len(df)))
-print("Last retrain count updated.")
+LAST_RETRAIN_FILE.write_text(str(total_feedback))
+print("Updated last retrain counter.")
