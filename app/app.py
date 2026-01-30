@@ -31,7 +31,7 @@ from tensorflow.keras.applications.mobilenet_v2 import preprocess_input
 # CONFIG / FEATURE FLAGS
 # ======================================================
 IS_CLOUD = os.getenv("STREAMLIT_CLOUD", "false").lower() == "true"
-ENABLE_BLIP = not IS_CLOUD  # BLIP disabled in cloud
+ENABLE_BLIP = not IS_CLOUD  # BLIP disabled in cloud deployments
 
 # Feedback paths
 FEEDBACK_CSV = ROOT_DIR / "feedback_log.csv"
@@ -86,20 +86,24 @@ if uploaded_file is not None:
     img_hash = get_file_hash(uploaded_file)
 
     # -----------------------------
-    # Initialize session state
+    # Initialize session state keys
     # -----------------------------
-    if "last_image_hash" not in st.session_state:
-        st.session_state.last_image_hash = None
-    if "feedback_submitted" not in st.session_state:
+    for key in ["last_image_hash", "feedback_submitted", "feedback"]:
+        if key not in st.session_state:
+            st.session_state[key] = None if key == "feedback" else ""
+
+    # -----------------------------
+    # Reset session state if new image
+    # -----------------------------
+    if st.session_state.last_image_hash != img_hash:
+        st.session_state.last_image_hash = img_hash
         st.session_state.feedback_submitted = False
-    if "feedback" not in st.session_state:
         st.session_state.feedback = None
 
-    # Reset feedback if new image uploaded
-    if st.session_state.last_image_hash != img_hash:
-        st.session_state.feedback_submitted = False
-        st.session_state.feedback = None
-        st.session_state.last_image_hash = img_hash
+        # Remove old widget keys
+        for k in list(st.session_state.keys()):
+            if k.startswith("feedback_"):
+                del st.session_state[k]
 
     # -----------------------------
     # Load and display image
@@ -108,7 +112,7 @@ if uploaded_file is not None:
     st.image(img, caption="Uploaded Image", use_column_width=True)
 
     # -----------------------------
-    # Top-3 predictions (cache tied to image hash)
+    # Top-3 predictions
     # -----------------------------
     @st.cache_resource
     def predict_image_cached(model, img_hash, img):
@@ -223,8 +227,8 @@ Highlighted regions indicate which parts of the image most influenced the modelâ
     else:
         st.info("Feedback already submitted for this image.")
 
-    # Optional: show feedback
-    if st.session_state.feedback:
+    # Optional: show feedback after submission
+    if st.session_state.feedback_submitted and st.session_state.feedback:
         with st.expander("View recorded feedback"):
             st.json(st.session_state.feedback)
 
