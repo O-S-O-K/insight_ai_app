@@ -121,7 +121,25 @@ else:
     cam_img = overlay_heatmap(heatmap, img)
 
     st.subheader("🔥 Grad-CAM Explanation")
-    st.image(cam_img, use_column_width=True)
+
+col1, col2 = st.columns(2)
+
+with col1:
+    st.image(img, caption="Original Image", use_column_width=True)
+
+with col2:
+    st.image(
+        cam_img,
+        caption="Grad-CAM Overlay (Model Attention)",
+        use_column_width=True,
+    )
+
+st.markdown(
+    """
+**What this shows:**  
+The highlighted regions indicate which parts of the image most influenced the model’s prediction.
+"""
+)
 
     # ------------------------------
     # BLIP Caption (Optional)
