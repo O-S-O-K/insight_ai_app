@@ -146,40 +146,52 @@ if uploaded_file:
     else:
         st.error("No Conv2D layer found for Grad-CAM.")
 
-    # ------------------------------
-    # Submit feedback
-    # ------------------------------
-    if st.button("Submit Feedback"):
-        if not user_selected_label:
-            st.error("Please provide a label for feedback.")
+# ------------------------------
+# Submit feedback
+# ------------------------------
+FEEDBACK_IMG_DIR = Path("feedback_images")
+FEEDBACK_IMG_DIR.mkdir(exist_ok=True)
+
+if st.button("Submit Feedback"):
+    if not user_selected_label:
+        st.error("Please provide a label for feedback.")
+    else:
+        # Save uploaded image with timestamp
+        filename = uploaded_file.name
+        timestamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
+        img_save_name = f"{timestamp}_{filename}"
+        img_path = FEEDBACK_IMG_DIR / img_save_name
+        img.save(img_path)
+
+        # Update dynamic mapping (BLIP keywords → classes)
+        if caption_lower in dynamic_mapping:
+            if user_selected_label not in dynamic_mapping[caption_lower]:
+                dynamic_mapping[caption_lower].append(user_selected_label)
         else:
-            # Update dynamic mapping
-            if caption_lower in dynamic_mapping:
-                if user_selected_label not in dynamic_mapping[caption_lower]:
-                    dynamic_mapping[caption_lower].append(user_selected_label)
-            else:
-                dynamic_mapping[caption_lower] = [user_selected_label]
+            dynamic_mapping[caption_lower] = [user_selected_label]
 
-            with open(mapping_path, "w") as f:
-                json.dump(dynamic_mapping, f, indent=2)
+        with open(mapping_path, "w") as f:
+            json.dump(dynamic_mapping, f, indent=2)
 
-            feedback_row = {
-                "timestamp": datetime.utcnow().isoformat(),
-                "top_prediction": decoded_boosted[0][1],
-                "top_prediction_conf": decoded_boosted[0][2],
-                "pred_correct": pred_correct,
-                "user_selected_label": user_selected_label,
-                "blip_caption": caption,
-                "caption_correct": caption_correct,
-                "user_feedback": user_text
-            }
+        # Append feedback to CSV, including image filename
+        feedback_row = {
+            "timestamp": datetime.utcnow().isoformat(),
+            "uploaded_filename": img_save_name,  # link to saved image
+            "top_prediction": decoded_boosted[0][1],
+            "top_prediction_conf": decoded_boosted[0][2],
+            "pred_correct": pred_correct,
+            "user_selected_label": user_selected_label,
+            "blip_caption": caption,
+            "caption_correct": caption_correct,
+            "user_feedback": user_text
+        }
 
-            df = pd.DataFrame([feedback_row])
-            df.to_csv(
-                feedback_log_path,
-                mode="a",
-                header=not feedback_log_path.exists(),
-                index=False
-            )
+        df = pd.DataFrame([feedback_row])
+        df.to_csv(
+            feedback_log_path,
+            mode="a",
+            header=not feedback_log_path.exists(),
+            index=False
+        )
 
-            st.success("Feedback saved! ✅")
+        st.success(f"Feedback saved! ✅ Image stored as {img_save_name}")
