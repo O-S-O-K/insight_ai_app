@@ -2,6 +2,7 @@
 import numpy as np
 import tensorflow as tf
 from tensorflow.keras.applications import MobileNetV2
+from tensorflow.keras.applications.mobilenet_v2 import preprocess_input, decode_predictions
 from tensorflow.keras import Model
 from PIL import Image
 import matplotlib.cm as cm
@@ -10,32 +11,51 @@ import matplotlib.cm as cm
 # Load MobileNetV2
 # ------------------------------
 def load_cnn_model_pretrained(num_classes=1000):
+    """Load pretrained MobileNetV2 with ImageNet weights"""
     model = MobileNetV2(weights="imagenet", include_top=True)
     return model
+
+def load_cnn_model():
+    """Wrapper for app.py"""
+    return load_cnn_model_pretrained()
+
+# ------------------------------
+# Predict Image
+# ------------------------------
+def predict_image(model, image, top=5):
+    """Run image through model and return top predictions"""
+    img = image.resize((224, 224))
+    x = np.array(img)
+    x = np.expand_dims(x, axis=0)
+    x = preprocess_input(x)
+
+    preds = model.predict(x)
+    decoded = decode_predictions(preds, top=top)[0]
+    return [(label, float(score)) for (_, label, score) in decoded]
 
 # ------------------------------
 # Grad-CAM helpers
 # ------------------------------
 def find_last_conv_layer(model):
+    """Find last convolutional layer in model"""
     for layer in reversed(model.layers):
         if isinstance(layer, tf.keras.layers.Conv2D):
             return layer
-    return None
+    raise ValueError("No Conv2D layer found in model.")
 
 def get_gradcam_heatmap(model, last_conv_layer, img_tensor, pred_index=None):
     """
     Compute Grad-CAM heatmap for a given image tensor.
-    
     Args:
         model: Keras model
         last_conv_layer: last convolutional layer in the model
-        img_tensor: preprocessed image tensor
+        img_tensor: preprocessed image tensor (1, H, W, C)
         pred_index: index of the class to generate heatmap for
     Returns:
         heatmap: numpy array of Grad-CAM
     """
-    grad_model = tf.keras.models.Model(
-        [model.inputs], [model.get_layer(last_conv_layer.name).output, model.output]
+    grad_model = Model(
+        [model.inputs], [last_conv_layer.output, model.output]
     )
 
     with tf.GradientTape() as tape:
@@ -54,14 +74,14 @@ def get_gradcam_heatmap(model, last_conv_layer, img_tensor, pred_index=None):
     return heatmap.numpy()
 
 # ------------------------------
-# Overlay
+# Overlay heatmap
 # ------------------------------
 def overlay_heatmap(heatmap, image, alpha=0.4, colormap="jet"):
     heatmap = np.uint8(255 * heatmap)
     heatmap = Image.fromarray(heatmap).resize(image.size)
 
     cmap = cm.get_cmap(colormap)
-    colored = cmap(np.array(heatmap) / 255.0)
+    colored = cmap(np.array(heatmap)/255.0)
     colored = np.uint8(colored[:, :, :3] * 255)
 
     overlay = Image.blend(image.convert("RGB"), Image.fromarray(colored), alpha)
