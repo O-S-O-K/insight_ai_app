@@ -1,43 +1,50 @@
-# utils/blip_caption.py
-
 import os
-from PIL import Image
+import torch
 import streamlit as st
 from transformers import BlipProcessor, BlipForConditionalGeneration
 
-BLIP_MODEL_ID = "Salesforce/blip-image-captioning-base"
+BLIP_MODEL_NAME = "Salesforce/blip-image-captioning-small"
+LOCAL_MODEL_PATH = "models/blip"
 
-@st.cache_resource(show_spinner="Loading vision-language model (BLIP)...")
+# ======================================================
+# LOAD MODEL (CACHED, SAFE)
+# ======================================================
+
+@st.cache_resource
 def load_blip_model():
     """
-    Loads BLIP processor and model once per app container.
-    Safe for cloud deployment.
+    Loads BLIP model either from local path (preferred)
+    or Hugging Face Hub.
     """
-    token = os.getenv("HF_TOKEN", None)
+    if os.path.exists(LOCAL_MODEL_PATH):
+        processor = BlipProcessor.from_pretrained(LOCAL_MODEL_PATH)
+        model = BlipForConditionalGeneration.from_pretrained(LOCAL_MODEL_PATH)
+    else:
+        processor = BlipProcessor.from_pretrained(BLIP_MODEL_NAME)
+        model = BlipForConditionalGeneration.from_pretrained(BLIP_MODEL_NAME)
 
-    processor = BlipProcessor.from_pretrained(
-        BLIP_MODEL_ID,
-        token=token
-    )
-    model = BlipForConditionalGeneration.from_pretrained(
-        BLIP_MODEL_ID,
-        token=token
-    )
-
+    model.eval()
     return processor, model
 
+# ======================================================
+# GENERATE CAPTION
+# ======================================================
 
-def generate_blip_caption(image: Image.Image) -> str | None:
+def generate_blip_caption(image):
     """
-    Generates a caption for the input PIL image.
-    Returns None if BLIP is unavailable.
+    Generates a natural-language caption for a PIL image.
+    Returns None on failure.
     """
     try:
         processor, model = load_blip_model()
+
         inputs = processor(images=image, return_tensors="pt")
-        output = model.generate(**inputs)
-        return processor.decode(output[0], skip_special_tokens=True)
-    except Exception as e:
-        # Never crash the app for captioning
-        print(f"[BLIP disabled] {e}")
+
+        with torch.no_grad():
+            output = model.generate(**inputs, max_length=30)
+
+        caption = processor.decode(output[0], skip_special_tokens=True)
+        return caption
+
+    except Exception:
         return None
