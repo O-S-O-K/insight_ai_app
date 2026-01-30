@@ -2,7 +2,17 @@
 
 ### An interactive Streamlit app combining CNN predictions, Grad-CAM explanations, BLIP captions, and human-in-the-loop feedback for smarter, interpretable AI.
 
-![App Screenshot](screenshots/xai_app_screenshot.png)
+
+[![Live Demo](https://img.shields.io/badge/Live-Demo-brightgreen)](https://insight-ai-v1.streamlit.app)
+
+
+InsightAI is an interactive explainable AI application that:
+- Classifies images using a CNN (MobileNetV2)
+- Visualizes model attention with Grad-CAM
+- Optionally generates natural-language image captions (BLIP)
+- Runs fully in the browser (mobile-friendly)
+
+👉 Try it live: **no install required**
 
 **Insight AI** is an end-to-end Explainable AI (XAI) system that goes beyond static image classification. It combines:
 
@@ -38,6 +48,7 @@ The result is a project that demonstrates not only *model accuracy*, but *model 
   - [Tech Stack](#tech-stack)
   - [Why This Project Matters](#why-this-project-matters)
   - [Example Test Session (End-to-End)](#example-test-session-end-to-end)
+  - [🌍 Deployment](#-deployment)
   - [Author](#author)
 
 ---
@@ -224,6 +235,14 @@ This project shows how ML systems can **learn from users**, adapt to ambiguity, 
 8. Result: User-driven explainability and feedback loop, no retraining required
 
 ---
+
+## 🌍 Deployment
+
+This app is deployed using **Streamlit Cloud** and is accessible at:
+
+👉 https://insight-ai-v1.streamlit.app
+
+The app is mobile-compatible and runs entirely in the browser.
 
 ## Author
 
