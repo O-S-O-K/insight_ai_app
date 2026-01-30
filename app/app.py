@@ -22,6 +22,7 @@ from utils.keyword_mapping import KEYWORD_CLASS_MAP
 from utils.blip_caption import generate_blip_caption
 
 from tensorflow.keras.applications.mobilenet_v2 import decode_predictions
+ENABLE_BLIP=os.getenv("ENABLE_BLIP", "false").lower() == "true"
 
 # ------------------------------
 # App config
@@ -71,10 +72,21 @@ if uploaded_file:
     for _, label, score in decoded:
         st.write(f"{label}: {score*100:.2f}%")
 
-    # BLIP caption
-    caption = generate_blip_caption(img)
-    st.write("BLIP Caption:")
-    st.write(caption)
+# BLIP caption
+
+caption = None
+
+if ENABLE_BLIP:
+    with st.spinner("Generating image caption..."):
+        caption = generate_blip_caption(img)
+
+    if caption:
+        st.subheader("BLIP Caption")
+        st.write(caption)
+    else:
+        st.info("Caption temporarily unavailable.")
+else:
+    st.info("BLIP captioning is disabled for this deployment.")
 
     # Map BLIP caption to classes
     mapped_classes = []

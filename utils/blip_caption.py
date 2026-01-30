@@ -1,49 +1,43 @@
 # utils/blip_caption.py
 
+import os
 from PIL import Image
 import streamlit as st
 from transformers import BlipProcessor, BlipForConditionalGeneration
-import os
 
-# ------------------------------
-# Constants
-# ------------------------------
-BLIP_MODEL_NAME = "Salesforce/blip-image-captioning-small"  # smaller for Cloud
-LOCAL_MODEL_PATH = "models/blip-small"  # optional local path if you pre-download
+BLIP_MODEL_ID = "Salesforce/blip-image-captioning-base"
 
-# ------------------------------
-# Lazy-load BLIP processor & model
-# ------------------------------
-@st.cache_resource
+@st.cache_resource(show_spinner="Loading vision-language model (BLIP)...")
 def load_blip_model():
     """
-    Loads the BLIP processor and model. Uses local path if available, otherwise downloads.
-    Cached across Streamlit sessions.
+    Loads BLIP processor and model once per app container.
+    Safe for cloud deployment.
     """
-    # If you pre-downloaded the model to LOCAL_MODEL_PATH
-    if os.path.exists(LOCAL_MODEL_PATH):
-        processor = BlipProcessor.from_pretrained(LOCAL_MODEL_PATH)
-        model = BlipForConditionalGeneration.from_pretrained(LOCAL_MODEL_PATH)
-    else:
-        processor = BlipProcessor.from_pretrained(BLIP_MODEL_NAME)
-        model = BlipForConditionalGeneration.from_pretrained(BLIP_MODEL_NAME)
+    token = os.getenv("HF_TOKEN", None)
+
+    processor = BlipProcessor.from_pretrained(
+        BLIP_MODEL_ID,
+        token=token
+    )
+    model = BlipForConditionalGeneration.from_pretrained(
+        BLIP_MODEL_ID,
+        token=token
+    )
+
     return processor, model
 
-# ------------------------------
-# Caption generation function
-# ------------------------------
-def generate_blip_caption(image: Image.Image) -> str:
-    """
-    Generates a natural-language caption for a PIL image using BLIP.
-    """
-    processor, model = load_blip_model()
 
-    # Prepare image for BLIP
-    inputs = processor(images=image, return_tensors="pt")
-    
-    # Generate caption
-    out = model.generate(**inputs)
-    
-    # Decode output to string
-    caption = processor.decode(out[0], skip_special_tokens=True)
-    return caption
+def generate_blip_caption(image: Image.Image) -> str | None:
+    """
+    Generates a caption for the input PIL image.
+    Returns None if BLIP is unavailable.
+    """
+    try:
+        processor, model = load_blip_model()
+        inputs = processor(images=image, return_tensors="pt")
+        output = model.generate(**inputs)
+        return processor.decode(output[0], skip_special_tokens=True)
+    except Exception as e:
+        # Never crash the app for captioning
+        print(f"[BLIP disabled] {e}")
+        return None
