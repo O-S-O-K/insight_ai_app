@@ -136,37 +136,59 @@ Highlighted regions indicate which parts of the image most influenced the model�
 """
     )
 
-    # ----------------------------------------------
-    # Feedback (Human-in-the-Loop)
-    # ----------------------------------------------
-    st.subheader("🧠 Feedback")
+  # ----------------------------------------------
+# Feedback (Human-in-the-Loop)
+# ----------------------------------------------
+st.subheader("🧠 Feedback")
 
-    if "feedback_submitted" not in st.session_state:
-        st.session_state.feedback_submitted = False
+if "feedback_submitted" not in st.session_state:
+    st.session_state.feedback_submitted = False
 
-    if not st.session_state.feedback_submitted:
-        correct = st.radio(
-            "Was the model’s top prediction correct?",
-            ["Yes", "No"],
-            horizontal=True,
+if not st.session_state.feedback_submitted:
+
+    correct = st.radio(
+        "Was the model’s top prediction correct?",
+        ["Yes", "No"],
+        horizontal=True,
+    )
+
+    user_label = None
+
+    if correct == "Yes":
+        user_label = preds[0][0]
+
+    else:
+        st.markdown("### What is the correct label?")
+
+        top_labels = [label for label, _ in preds]
+        options = top_labels[1:] + ["Other"]
+
+        selection = st.radio(
+            "Select one of the alternatives or choose *Other*",
+            options,
         )
 
-        if correct == "No":
+        if selection == "Other":
             user_label = st.text_input(
-                "What should the correct label be?"
+                "Enter the correct label"
             )
         else:
-            user_label = preds[0][0]
+            user_label = selection
 
-        if st.button("Submit Feedback"):
+    if st.button("Submit Feedback"):
+        if user_label is None or user_label.strip() == "":
+            st.warning("Please provide a valid label.")
+        else:
             st.session_state.feedback = {
                 "model_prediction": preds[0][0],
                 "user_label": user_label,
+                "was_correct": correct,
             }
             st.session_state.feedback_submitted = True
             st.success("Thanks! Your feedback has been recorded.")
-    else:
-        st.info("Feedback already submitted for this image.")
+
+else:
+    st.info("Feedback already submitted for this image.")
 
     # ----------------------------------------------
     # Optional: Feedback summary (demo transparency)
