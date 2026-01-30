@@ -19,5 +19,14 @@
   ],
   "a rabbit sitting in the dirt": [
     "rabbit"
+  ],
+  "a tree on a hill": [
+    "sycamore_tree"
+  ],
+  "a plane flying in the sky": [
+    "warplane"
+  ],
+  "a jet is flying over the water": [
+    "warplane"
   ]
 }
