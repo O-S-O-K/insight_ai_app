@@ -41,7 +41,20 @@ FEEDBACK_IMG_DIR.mkdir(exist_ok=True)
 st.set_page_config(page_title="InsightAI", layout="wide")
 
 # ======================================================
-# 🔐 SESSION STATE INITIALIZATION (GLOBAL & CRASH-PROOF)
+# ABSOLUTE SESSION STATE SAFETY (CLOUD-SAFE)
+# ======================================================
+# These MUST be initialized unconditionally on every run
+if "feedback_submitted" not in st.session_state:
+    st.session_state.feedback_submitted = False
+
+if "last_image_hash" not in st.session_state:
+    st.session_state.last_image_hash = None
+
+if "feedback" not in st.session_state:
+    st.session_state.feedback = None
+
+# ======================================================
+# 🔐 SESSION STATE INITIALIZATION (GLOBAL & CRASH‑PROOF)
 # ======================================================
 DEFAULT_SESSION_STATE = {
     "last_image_hash": None,
@@ -118,7 +131,7 @@ if uploaded_file is not None:
     st.image(img, caption="Uploaded Image", use_column_width=True)
 
     # -----------------------------
-    # Top-3 predictions (hash-scoped cache)
+    # Top-3 predictions (hash‑scoped cache)
     # -----------------------------
     @st.cache_resource
     def predict_image_cached(model, img_hash, img):
@@ -161,11 +174,11 @@ Highlighted regions indicate which parts of the image most influenced the model�
     )
 
     # -----------------------------
-    # Feedback (state-safe & image-scoped)
+    # Feedback (state‑safe & image‑scoped)
     # -----------------------------
     st.subheader("🧠 Feedback")
 
-    if not st.session_state.feedback_submitted:
+    if not st.session_state.get("feedback_submitted", False):
         base_key = f"feedback_{img_hash}"
 
         correct = st.radio(
@@ -239,7 +252,7 @@ Highlighted regions indicate which parts of the image most influenced the model�
             st.json(st.session_state.feedback)
 
     # -----------------------------
-    # BLIP Caption (hash-scoped cache)
+    # BLIP Caption (hash‑scoped cache)
     # -----------------------------
     st.subheader("📝 Image Caption")
 
