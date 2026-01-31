@@ -41,6 +41,19 @@ FEEDBACK_IMG_DIR.mkdir(exist_ok=True)
 st.set_page_config(page_title="InsightAI", layout="wide")
 
 # ======================================================
+# üîê SESSION STATE INITIALIZATION (GLOBAL & CRASH-PROOF)
+# ======================================================
+DEFAULT_SESSION_STATE = {
+    "last_image_hash": None,
+    "feedback_submitted": False,
+    "feedback": None,
+}
+
+for key, default in DEFAULT_SESSION_STATE.items():
+    if key not in st.session_state:
+        st.session_state[key] = default
+
+# ======================================================
 # HELPERS
 # ======================================================
 def get_file_hash(uploaded_file):
@@ -86,21 +99,14 @@ if uploaded_file is not None:
     img_hash = get_file_hash(uploaded_file)
 
     # -----------------------------
-    # Initialize session state keys
-    # -----------------------------
-    for key in ["last_image_hash", "feedback_submitted", "feedback"]:
-        if key not in st.session_state:
-            st.session_state[key] = None if key == "feedback" else ""
-
-    # -----------------------------
-    # Reset session state if new image
+    # Reset state when image changes
     # -----------------------------
     if st.session_state.last_image_hash != img_hash:
         st.session_state.last_image_hash = img_hash
         st.session_state.feedback_submitted = False
         st.session_state.feedback = None
 
-        # Remove old widget keys
+        # Remove ALL widget keys tied to previous image
         for k in list(st.session_state.keys()):
             if k.startswith("feedback_"):
                 del st.session_state[k]
@@ -112,7 +118,7 @@ if uploaded_file is not None:
     st.image(img, caption="Uploaded Image", use_column_width=True)
 
     # -----------------------------
-    # Top-3 predictions
+    # Top-3 predictions (hash-scoped cache)
     # -----------------------------
     @st.cache_resource
     def predict_image_cached(model, img_hash, img):
@@ -155,7 +161,7 @@ Highlighted regions indicate which parts of the image most influenced the model‚
     )
 
     # -----------------------------
-    # Feedback (unique keys per image)
+    # Feedback (state-safe & image-scoped)
     # -----------------------------
     st.subheader("üß† Feedback")
 
@@ -166,7 +172,7 @@ Highlighted regions indicate which parts of the image most influenced the model‚
             "Was the model‚Äôs top prediction correct?",
             ["Yes", "No"],
             horizontal=True,
-            key=f"{base_key}_correct"
+            key=f"{base_key}_correct",
         )
 
         user_label = None
@@ -181,30 +187,28 @@ Highlighted regions indicate which parts of the image most influenced the model‚
             selection = st.radio(
                 "Select one of the alternatives or choose *Other*",
                 options,
-                key=f"{base_key}_selection"
+                key=f"{base_key}_selection",
             )
 
             if selection == "Other":
                 user_label = st.text_input(
                     "Enter the correct label",
-                    key=f"{base_key}_text"
+                    key=f"{base_key}_text",
                 )
             else:
                 user_label = selection
 
         if st.button("Submit Feedback", key=f"{base_key}_submit"):
-            if user_label is None or user_label.strip() == "":
+            if not user_label or not user_label.strip():
                 st.warning("Please provide a valid label.")
             else:
-                # Save image locally
+                # Save image
                 img_filename = uploaded_file.name
-                img_save_path = FEEDBACK_IMG_DIR / img_filename
                 try:
-                    img.save(img_save_path)
+                    img.save(FEEDBACK_IMG_DIR / img_filename)
                 except Exception as e:
                     st.warning(f"Could not save image: {e}")
 
-                # Save feedback to CSV
                 feedback_entry = {
                     "uploaded_filename": img_filename,
                     "model_prediction": preds[0][0],
@@ -214,7 +218,10 @@ Highlighted regions indicate which parts of the image most influenced the model‚
 
                 if FEEDBACK_CSV.exists():
                     df_existing = pd.read_csv(FEEDBACK_CSV)
-                    df = pd.concat([df_existing, pd.DataFrame([feedback_entry])], ignore_index=True)
+                    df = pd.concat(
+                        [df_existing, pd.DataFrame([feedback_entry])],
+                        ignore_index=True,
+                    )
                 else:
                     df = pd.DataFrame([feedback_entry])
 
@@ -227,13 +234,12 @@ Highlighted regions indicate which parts of the image most influenced the model‚
     else:
         st.info("Feedback already submitted for this image.")
 
-    # Optional: show feedback after submission
     if st.session_state.feedback_submitted and st.session_state.feedback:
         with st.expander("View recorded feedback"):
             st.json(st.session_state.feedback)
 
     # -----------------------------
-    # BLIP Caption (cache tied to image hash)
+    # BLIP Caption (hash-scoped cache)
     # -----------------------------
     st.subheader("üìù Image Caption")
 
