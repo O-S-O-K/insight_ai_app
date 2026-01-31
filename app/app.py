@@ -218,6 +218,6 @@ if uploaded_file:
             return generate_blip_caption(img)
 
         caption = blip_cached(img_hash, img)
-        st.write(caption if caption else "Caption generation failed.")
+        st.write(caption if caption else "Caption generation disabled in cloud demo.")
     else:
         st.info("Image captioning disabled in cloud demo.")
