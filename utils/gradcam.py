@@ -1,37 +1,53 @@
-# utils/gradcam.py
 import numpy as np
 import tensorflow as tf
-from tensorflow.keras.applications import MobileNetV2
-from tensorflow.keras.applications.mobilenet_v2 import preprocess_input, decode_predictions
+from tensorflow.keras.models import load_model
 from tensorflow.keras import Model
+from tensorflow.keras.preprocessing.image import img_to_array
 from PIL import Image
 import matplotlib.cm as cm
+from pathlib import Path
 
 # ------------------------------
-# Load MobileNetV2
+# Paths
 # ------------------------------
-def load_cnn_model_pretrained(num_classes=1000):
-    """Load pretrained MobileNetV2 with ImageNet weights"""
-    model = MobileNetV2(weights="imagenet", include_top=True)
+ROOT_DIR = Path(__file__).resolve().parents[1]
+MODEL_PATH = ROOT_DIR / "models/cnn_baseline_functional.h5"
+
+# ------------------------------
+# Load canonical CNN model
+# ------------------------------
+def load_cnn_model():
+    if not MODEL_PATH.exists():
+        raise FileNotFoundError(f"Cannot find CNN model at {MODEL_PATH}")
+    model = load_model(MODEL_PATH)
     return model
 
-def load_cnn_model():
-    """Wrapper for app.py"""
-    return load_cnn_model_pretrained()
-
 # ------------------------------
-# Predict Image
+# Predict image
 # ------------------------------
-def predict_image(model, image, top=5):
-    """Run image through model and return top predictions"""
-    img = image.resize((224, 224))
-    x = np.array(img)
+def predict_image(model, image, top=3):
+    """
+    Run an image through your CNN and return top predictions.
+    Assumes your CNN outputs one-hot class vectors.
+    """
+    img_resized = image.resize((224, 224))
+    x = img_to_array(img_resized) / 255.0
     x = np.expand_dims(x, axis=0)
-    x = preprocess_input(x)
 
-    preds = model.predict(x)
-    decoded = decode_predictions(preds, top=top)[0]
-    return [(label, float(score)) for (_, label, score) in decoded]
+    preds = model.predict(x)[0]  # (num_classes,)
+    # Get top indices
+    top_idx = preds.argsort()[-top:][::-1]
+    top_scores = preds[top_idx]
+
+    # Class labels: use model's output names if available
+    if hasattr(model, "classes_"):  # optional attribute
+        labels = model.classes_
+    else:
+        labels = [f"class_{i}" for i in range(len(preds))]
+
+    top_labels = [labels[i] for i in top_idx]
+
+    return list(zip(top_labels, top_scores))
 
 # ------------------------------
 # Grad-CAM helpers
@@ -54,10 +70,7 @@ def get_gradcam_heatmap(model, last_conv_layer, img_tensor, pred_index=None):
     Returns:
         heatmap: numpy array of Grad-CAM
     """
-    grad_model = Model(
-        [model.inputs], [last_conv_layer.output, model.output]
-    )
-
+    grad_model = Model([model.inputs], [last_conv_layer.output, model.output])
     with tf.GradientTape() as tape:
         conv_outputs, predictions = grad_model(img_tensor)
         if pred_index is None:
@@ -73,9 +86,6 @@ def get_gradcam_heatmap(model, last_conv_layer, img_tensor, pred_index=None):
     heatmap = tf.maximum(heatmap, 0) / tf.math.reduce_max(heatmap)
     return heatmap.numpy()
 
-# ------------------------------
-# Overlay heatmap
-# ------------------------------
 def overlay_heatmap(heatmap, image, alpha=0.4, colormap="jet"):
     heatmap = np.uint8(255 * heatmap)
     heatmap = Image.fromarray(heatmap).resize(image.size)

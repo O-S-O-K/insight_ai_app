@@ -1,5 +1,6 @@
 # ======================================================
 # InsightAI - Explainable Image Classification App
+# Fully compatible with custom CNN
 # ======================================================
 
 import os
@@ -7,7 +8,7 @@ import sys
 from pathlib import Path
 import streamlit as st
 import numpy as np
-from PIL import Image, ExifTags
+from PIL import Image
 import pandas as pd
 import hashlib
 
@@ -25,8 +26,6 @@ from utils.gradcam import (
     overlay_heatmap,
 )
 from utils.blip_caption import generate_blip_caption
-from tensorflow.keras.applications.mobilenet_v2 import preprocess_input
-from tensorflow.keras.models import load_model as keras_load_model
 
 # ======================================================
 # CONFIG / FEATURE FLAGS
@@ -41,7 +40,7 @@ FEEDBACK_IMG_DIR.mkdir(exist_ok=True)
 st.set_page_config(page_title="InsightAI", layout="wide")
 
 # ======================================================
-# 🔒 SESSION STATE INITIALIZATION
+# SESSION STATE
 # ======================================================
 SESSION_DEFAULTS = {
     "last_image_hash": None,
@@ -62,45 +61,18 @@ def get_file_hash(uploaded_file):
     uploaded_file.seek(0)
     return hashlib.md5(data).hexdigest()
 
-def load_image_with_exif(uploaded_file):
-    """Load image and apply EXIF rotation (mobile-safe)."""
-    img = Image.open(uploaded_file)
-    try:
-        for orientation in ExifTags.TAGS.keys():
-            if ExifTags.TAGS[orientation] == "Orientation":
-                break
-        exif = img._getexif()
-        if exif is not None:
-            orientation_value = exif.get(orientation)
-            if orientation_value == 3:
-                img = img.rotate(180, expand=True)
-            elif orientation_value == 6:
-                img = img.rotate(270, expand=True)
-            elif orientation_value == 8:
-                img = img.rotate(90, expand=True)
-    except Exception:
-        pass
-    return img.convert("RGB")
+def load_image(uploaded_file):
+    img = Image.open(uploaded_file).convert("RGB")
+    return img
 
 # ======================================================
-# LOAD MODEL (auto fine-tuned if exists)
+# LOAD MODEL
 # ======================================================
 @st.cache_resource
-def load_model():
-    finetuned_path = ROOT_DIR / "models/cnn_model_finetuned.h5"
-    base_path = ROOT_DIR / "models/cnn_model.h5"
+def load_model_cached():
+    return load_cnn_model()
 
-    if finetuned_path.exists():
-        st.info("Loading fine-tuned CNN model...")
-        return keras_load_model(finetuned_path)
-    elif base_path.exists():
-        st.info("Loading base CNN model...")
-        return keras_load_model(base_path)
-    else:
-        st.error("No CNN model found! Please ensure cnn_model.h5 exists in models/")
-        st.stop()
-
-model = load_model()
+model = load_model_cached()
 
 # ======================================================
 # HEADER
@@ -124,19 +96,19 @@ uploaded_file = st.file_uploader("Upload an image", type=["jpg", "jpeg", "png"])
 if uploaded_file:
     img_hash = get_file_hash(uploaded_file)
 
-    # Reset state on new image
+    # Reset state for new image
     if st.session_state.last_image_hash != img_hash:
         st.session_state.last_image_hash = img_hash
         st.session_state.feedback_submitted = False
         st.session_state.feedback = None
 
+        # Clear previous feedback widgets
         for k in list(st.session_state.keys()):
             if k.startswith("feedback_"):
                 del st.session_state[k]
 
-    # Load mobile-safe image
-    img = load_image_with_exif(uploaded_file)
-    st.image(img, caption="Uploaded Image", width="content")
+    img = load_image(uploaded_file)
+    st.image(img, caption="Uploaded Image", use_column_width=True)
 
     # -----------------------------
     # Predictions
@@ -149,14 +121,14 @@ if uploaded_file:
 
     st.subheader("🔍 Top Predictions")
     for i, (label, score) in enumerate(preds, 1):
-        st.write(f"{i}. **{label}** — {score * 100:.2f}%")
+        st.write(f"{i}. **{label}** — {score*100:.2f}%")
 
     # -----------------------------
     # Grad-CAM
     # -----------------------------
     st.subheader("🔥 Grad-CAM Explanation")
     img_resized = img.resize((224, 224))
-    img_tensor = preprocess_input(np.expand_dims(np.array(img_resized), 0))
+    img_tensor = np.expand_dims(np.array(img_resized)/255.0, 0)
 
     last_conv = find_last_conv_layer(model)
     heatmap = get_gradcam_heatmap(model, last_conv, img_tensor)
@@ -165,15 +137,15 @@ if uploaded_file:
     cam_img = overlay_heatmap(heatmap, img, alpha)
 
     c1, c2 = st.columns(2)
-    c1.image(img, caption="Original", width="content")
-    c2.image(cam_img, caption="Grad-CAM", width="content")
+    c1.image(img, caption="Original", use_column_width=True)
+    c2.image(cam_img, caption="Grad-CAM", use_column_width=True)
 
     # -----------------------------
     # Feedback
     # -----------------------------
     st.subheader("🧠 Feedback")
 
-    if not st.session_state.get("feedback_submitted", False):
+    if not st.session_state.feedback_submitted:
         base = f"feedback_{img_hash}"
 
         correct = st.radio(
@@ -184,13 +156,11 @@ if uploaded_file:
         )
 
         user_label = None
-
         if correct == "Yes":
             user_label = preds[0][0]
         else:
             options = [label for label, _ in preds[1:]] + ["Other"]
             choice = st.radio("Select correct label", options, key=f"{base}_choice")
-
             if choice == "Other":
                 user_label = st.text_input("Enter label", key=f"{base}_text")
             else:
@@ -200,51 +170,28 @@ if uploaded_file:
             if not user_label or not user_label.strip():
                 st.warning("Please provide a valid label.")
             else:
-                # -----------------------------
-                # Save uploaded image for retraining (EXIF-corrected)
-                # -----------------------------
-                FEEDBACK_IMG_DIR.mkdir(exist_ok=True)
-                uploaded_file.seek(0)
-                feedback_img = load_image_with_exif(uploaded_file)
-
-                feedback_img_path = FEEDBACK_IMG_DIR / uploaded_file.name
-                if feedback_img_path.exists():
-                    name, ext = uploaded_file.name.rsplit(".", 1)
-                    feedback_img_path = FEEDBACK_IMG_DIR / f"{name}_{img_hash[:6]}.{ext}"
-
-                feedback_img.save(feedback_img_path)
-
-                # -----------------------------
-                # Save feedback CSV
-                # -----------------------------
                 entry = {
-                    "uploaded_filename": feedback_img_path.name,
+                    "uploaded_filename": uploaded_file.name,
                     "model_prediction": preds[0][0],
                     "user_label": user_label,
                     "was_correct": correct,
                 }
-
                 if FEEDBACK_CSV.exists():
-                    df = pd.concat([
-                        pd.read_csv(FEEDBACK_CSV),
-                        pd.DataFrame([entry])
-                    ], ignore_index=True)
+                    df = pd.concat([pd.read_csv(FEEDBACK_CSV), pd.DataFrame([entry])], ignore_index=True)
                 else:
                     df = pd.DataFrame([entry])
-
                 df.to_csv(FEEDBACK_CSV, index=False)
 
                 st.session_state.feedback = entry
                 st.session_state.feedback_submitted = True
                 st.success("Thanks! Feedback recorded.")
-
     else:
         st.info("Feedback already submitted for this image.")
 
     # -----------------------------
     # Show feedback
     # -----------------------------
-    if st.session_state.get("feedback_submitted", False) and st.session_state.get("feedback"):
+    if st.session_state.feedback_submitted and st.session_state.feedback is not None:
         with st.expander("View recorded feedback"):
             st.json(st.session_state.feedback)
 
@@ -252,12 +199,10 @@ if uploaded_file:
     # BLIP caption
     # -----------------------------
     st.subheader("📝 Image Caption")
-
     if ENABLE_BLIP:
         @st.cache_resource
         def blip_cached(img_hash, img):
             return generate_blip_caption(img)
-
         caption = blip_cached(img_hash, img)
         st.write(caption if caption else "Caption generation disabled in cloud demo.")
     else:
