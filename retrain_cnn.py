@@ -4,7 +4,7 @@
 
 import pandas as pd
 from pathlib import Path
-from PIL import Image
+from PIL import Image, ExifTags
 import numpy as np
 from tensorflow.keras.utils import to_categorical
 from tensorflow.keras.models import load_model
@@ -34,13 +34,35 @@ if df.empty:
     exit(0)
 
 # -----------------------------
+# EXIF-safe image loader
+# -----------------------------
+def load_image_exif_safe(path):
+    img = Image.open(path)
+    try:
+        for orientation in ExifTags.TAGS.keys():
+            if ExifTags.TAGS[orientation] == "Orientation":
+                break
+        exif = img._getexif()
+        if exif is not None:
+            orientation_value = exif.get(orientation)
+            if orientation_value == 3:
+                img = img.rotate(180, expand=True)
+            elif orientation_value == 6:
+                img = img.rotate(270, expand=True)
+            elif orientation_value == 8:
+                img = img.rotate(90, expand=True)
+    except Exception:
+        pass
+    return img.resize((224, 224))
+
+# -----------------------------
 # Load images and labels
 # -----------------------------
 X, y = [], []
 for _, row in df.iterrows():
     img_path = FEEDBACK_IMG_DIR / row["uploaded_filename"]
     if img_path.exists():
-        img = Image.open(img_path).resize((224, 224))
+        img = load_image_exif_safe(img_path)
         X.append(img_to_array(img) / 255.0)
         y.append(row["user_label"])
     else:
@@ -93,10 +115,3 @@ print("Fine-tuning complete.")
 FINETUNED_MODEL_PATH.parent.mkdir(exist_ok=True)
 model.save(FINETUNED_MODEL_PATH)
 print(f"Fine-tuned model saved at {FINETUNED_MODEL_PATH}")
-
-# -----------------------------
-# Optionally: Clear feedback CSV if desired
-# -----------------------------
-# Uncomment to reset feedback log after retraining
-# FEEDBACK_CSV.unlink()
-# print("Feedback CSV cleared.")

@@ -41,11 +41,8 @@ FEEDBACK_IMG_DIR.mkdir(exist_ok=True)
 st.set_page_config(page_title="InsightAI", layout="wide")
 
 # ======================================================
-# 🔒 ABSOLUTE SESSION STATE INITIALIZATION (DO NOT MOVE)
+# 🔒 ABSOLUTE SESSION STATE INITIALIZATION
 # ======================================================
-# Streamlit Cloud can evaluate ANY branch before widgets exist.
-# Therefore EVERY accessed key must be created unconditionally.
-
 SESSION_DEFAULTS = {
     "last_image_hash": None,
     "feedback_submitted": False,
@@ -66,15 +63,12 @@ def get_file_hash(uploaded_file):
     return hashlib.md5(data).hexdigest()
 
 def load_image_with_exif(uploaded_file):
-    """Load an image and apply EXIF orientation if present (fixes mobile sideways images)."""
+    """Load image and apply EXIF rotation (mobile-safe)."""
     img = Image.open(uploaded_file)
-    
     try:
-        # Find the EXIF orientation tag
         for orientation in ExifTags.TAGS.keys():
             if ExifTags.TAGS[orientation] == "Orientation":
                 break
-        
         exif = img._getexif()
         if exif is not None:
             orientation_value = exif.get(orientation)
@@ -85,9 +79,9 @@ def load_image_with_exif(uploaded_file):
             elif orientation_value == 8:
                 img = img.rotate(90, expand=True)
     except Exception:
-        pass  # No EXIF data or corrupt
-    
+        pass
     return img.convert("RGB")
+
 # ======================================================
 # LOAD MODEL
 # ======================================================
@@ -125,14 +119,13 @@ if uploaded_file:
         st.session_state.feedback_submitted = False
         st.session_state.feedback = None
 
-        # Clear widget keys from prior image
         for k in list(st.session_state.keys()):
             if k.startswith("feedback_"):
                 del st.session_state[k]
 
-    # Load image
+    # Load mobile-safe image
     img = load_image_with_exif(uploaded_file)
-    st.image(img, caption="Uploaded Image", width="content")
+    st.image(img, caption="Uploaded Image", width=None)
 
     # -----------------------------
     # Predictions
@@ -161,8 +154,8 @@ if uploaded_file:
     cam_img = overlay_heatmap(heatmap, img, alpha)
 
     c1, c2 = st.columns(2)
-    c1.image(img, caption="Original", width="content")
-    c2.image(cam_img, caption="Grad-CAM", width="content")
+    c1.image(img, caption="Original", width=None)
+    c2.image(cam_img, caption="Grad-CAM", width=None)
 
     # -----------------------------
     # Feedback
@@ -196,8 +189,25 @@ if uploaded_file:
             if not user_label or not user_label.strip():
                 st.warning("Please provide a valid label.")
             else:
+                # -----------------------------
+                # Save uploaded image for retraining
+                # -----------------------------
+                FEEDBACK_IMG_DIR.mkdir(exist_ok=True)
+                uploaded_file.seek(0)
+                feedback_img = load_image_with_exif(uploaded_file)
+
+                feedback_img_path = FEEDBACK_IMG_DIR / uploaded_file.name
+                if feedback_img_path.exists():
+                    name, ext = uploaded_file.name.rsplit(".", 1)
+                    feedback_img_path = FEEDBACK_IMG_DIR / f"{name}_{img_hash[:6]}.{ext}"
+
+                feedback_img.save(feedback_img_path)
+
+                # -----------------------------
+                # Save feedback CSV
+                # -----------------------------
                 entry = {
-                    "uploaded_filename": uploaded_file.name,
+                    "uploaded_filename": feedback_img_path.name,
                     "model_prediction": preds[0][0],
                     "user_label": user_label,
                     "was_correct": correct,
@@ -221,12 +231,9 @@ if uploaded_file:
         st.info("Feedback already submitted for this image.")
 
     # -----------------------------
-    # Show feedback (SAFE ACCESS)
+    # Show feedback
     # -----------------------------
-    if (
-        st.session_state.get("feedback_submitted", False)
-        and st.session_state.get("feedback") is not None
-    ):
+    if st.session_state.get("feedback_submitted", False) and st.session_state.get("feedback"):
         with st.expander("View recorded feedback"):
             st.json(st.session_state.feedback)
 
