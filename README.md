@@ -1,24 +1,22 @@
 # InsightAI: Interactive Image Classification with Feedback
 
-### An interactive Streamlit app combining CNN predictions, Grad-CAM explanations, BLIP captions, and human-in-the-loop feedback for smarter, interpretable AI.
+[![Python](https://img.shields.io/badge/python-3.10-blue)](https://www.python.org/) [![Streamlit](https://img.shields.io/badge/Streamlit-v1.27-orange)](https://streamlit.io/) [![License: MIT](https://img.shields.io/badge/License-MIT-green)](LICENSE) [![Live Demo](https://img.shields.io/badge/Live-Demo-brightgreen)](https://insight-ai-v1.streamlit.app) [![Last Commit](https://img.shields.io/github/last-commit/O-S-O-K/insight-ai-app)](https://github.com/O-S-O-K/insight-ai-app)
 
-
-[![Live Demo](https://img.shields.io/badge/Live-Demo-brightgreen)](https://insight-ai-v1.streamlit.app)
-
+### An interactive Streamlit app combining CNN predictions, Grad-CAM explanations, optional BLIP captions, and human-in-the-loop feedback for smarter, interpretable AI.
 
 InsightAI is an interactive explainable AI application that:
-- Classifies images using a CNN (MobileNetV2)
-- Visualizes model attention with Grad-CAM
+- Classifies images using a CNN (MobileNetV2, pretrained or fine-tuned)
+- Visualizes model attention with Grad-CAM heatmaps
 - Optionally generates natural-language image captions (BLIP)
+- Allows human-in-the-loop feedback for improving predictions
 - Runs fully in the browser (mobile-friendly)
 
 👉 Try it live: **no install required**
 
-**Insight AI** is an end-to-end Explainable AI (XAI) system that goes beyond static image classification. It combines:
-
+**InsightAI** is an end-to-end Explainable AI (XAI) system that combines:
 - **Deep learning (CNNs)**
 - **Explainability (Grad-CAM)**
-- **Vision-language models (BLIP)**
+- **Vision-language models (BLIP, optional)**
 - **Human-in-the-loop feedback**
 - **Top-3 prediction selection & "Other" class input**
 - **Dynamic, user-driven Grad-CAM overlays**
@@ -31,7 +29,7 @@ The result is a project that demonstrates not only *model accuracy*, but *model 
 ## Table of Contents
 
 - [InsightAI: Interactive Image Classification with Feedback](#insightai-interactive-image-classification-with-feedback)
-    - [An interactive Streamlit app combining CNN predictions, Grad-CAM explanations, BLIP captions, and human-in-the-loop feedback for smarter, interpretable AI.](#an-interactive-streamlit-app-combining-cnn-predictions-grad-cam-explanations-blip-captions-and-human-in-the-loop-feedback-for-smarter-interpretable-ai)
+    - [An interactive Streamlit app combining CNN predictions, Grad-CAM explanations, optional BLIP captions, and human-in-the-loop feedback for smarter, interpretable AI.](#an-interactive-streamlit-app-combining-cnn-predictions-grad-cam-explanations-optional-blip-captions-and-human-in-the-loop-feedback-for-smarter-interpretable-ai)
   - [Table of Contents](#table-of-contents)
   - [Project Motivation](#project-motivation)
   - [High-Level System Overview](#high-level-system-overview)
@@ -39,10 +37,10 @@ The result is a project that demonstrates not only *model accuracy*, but *model 
   - [Model Architecture](#model-architecture)
     - [CNN Image Classifier](#cnn-image-classifier)
   - [Datasets Used](#datasets-used)
-    - [CIFAR-10 (Training)](#cifar-10-training)
+    - [ImageNet / Fine-Tuned Dataset](#imagenet--fine-tuned-dataset)
     - [User-Provided Images (Inference)](#user-provided-images-inference)
   - [Explainability: Grad-CAM](#explainability-grad-cam)
-  - [Vision-Language Integration (BLIP)](#vision-language-integration-blip)
+  - [Vision-Language Integration (BLIP, Optional)](#vision-language-integration-blip-optional)
   - [Dynamic Class Mapping](#dynamic-class-mapping)
   - [Installation](#installation)
   - [Tech Stack](#tech-stack)
@@ -50,16 +48,16 @@ The result is a project that demonstrates not only *model accuracy*, but *model 
   - [Example Test Session (End-to-End)](#example-test-session-end-to-end)
   - [🌍 Deployment](#-deployment)
   - [Author](#author)
+  - [License](#license)
 
 ---
 
 ## Project Motivation
 
-Most entry-level ML projects stop at:
+Most entry-level ML projects stop at:  
 > “Here is my model accuracy.”
 
-**Insight AI** goes further and asks:
-
+**InsightAI** goes further and asks:
 - Why did the model make this prediction?
 - Does the model’s reasoning align with human intuition?
 - Can users correct the model if predictions are wrong?
@@ -73,38 +71,7 @@ It demonstrates *real-world ML system thinking*, integrating explainability, hum
 
 **Pipeline Overview:**
 
-```text
-User Image Upload
-        │
-        ▼
-Image Preprocessing (resize, normalize)
-        │
-        ├───────────────┐
-        ▼               ▼
-CNN Prediction     BLIP Captioning
-(classification)   (vision → language)
-        │               │
-        ▼               ▼
-Grad-CAM Heatmap   Natural Language Caption
-        │               │
-        └───────┬───────┘
-                ▼
-        Insight Mapping Layer
-    (keywords + model outputs)
-                │
-                ▼
-    Final User-Facing Explanation
-                │
-                ▼
-        User Feedback Collection
-    (prediction + caption validation)
-                │
-                ▼
-    Dynamic Mapping & Feedback Log
-  (JSON + CSV, session-aware)
-                │
-                └───────────↺ (influences future sessions)
-```
+User Image Upload → Image Preprocessing (resize, normalize) → CNN Prediction & BLIP Captioning → Grad-CAM Heatmap & Natural Language Caption → Insight Mapping Layer (keywords + model outputs) → Final User-Facing Explanation → User Feedback Collection → Dynamic Mapping & Feedback Log (JSON + CSV, session-aware) → influences future sessions.
 
 This design shows how production ML systems can evolve over time, not remain static.
 
@@ -115,10 +82,10 @@ This design shows how production ML systems can evolve over time, not remain sta
 - Interactive Streamlit web interface
 - Real-time CNN image classification with top-3 predictions
 - Dynamic Grad-CAM heatmap visualization
-- BLIP-generated captions for semantic understanding
+- Optional BLIP-generated captions for semantic understanding
 - Keyword-to-class mapping
 - Human-in-the-loop feedback with top-3 selection and "Other" input
-- Session-safe prediction boosting
+- Session-safe prediction and Grad-CAM overlays
 - Persistent feedback logging for future semantic alignment
 - Modular, production-style codebase
 
@@ -128,44 +95,45 @@ This design shows how production ML systems can evolve over time, not remain sta
 
 ### CNN Image Classifier
 
-- Input shape: `(32, 32, 3)`
-- Convolution + MaxPooling blocks
+- Architecture: MobileNetV2 (pretrained on ImageNet, optionally fine-tuned)
+- Input shape: (224, 224, 3)
+- Convolution + Depthwise separable blocks
 - Dense fully connected layers
 - Softmax output layer
 - Optimizer: Adam, Loss: Categorical Crossentropy
-- Test Accuracy: ~73–74% (baseline CIFAR-style CNN)
 
-The model is intentionally simple to emphasize **system design, explainability, and feedback integration**.
+This architecture emphasizes **system design, explainability, and feedback integration** over raw model complexity.
 
 ---
 
 ## Datasets Used
 
-### CIFAR-10 (Training)
-- 60,000 color images across 10 classes
-- 50,000 training / 10,000 test images
-- Normalized to `[0,1]`
+### ImageNet / Fine-Tuned Dataset
+- Used to train or fine-tune the CNN
+- Standardized image resizing and normalization
 
 ### User-Provided Images (Inference)
-- Arbitrary real-world images
-- Resized and normalized
-- Used for inference and feedback, not retraining
+- Arbitrary real-world images uploaded by users
+- Resized and normalized for inference
+- Used for prediction, Grad-CAM, and feedback logging
+- No retraining occurs from these images
 
 ---
 
 ## Explainability: Grad-CAM
 
-- Visualizes where the CNN is "looking" when making predictions
+- Visualizes where the CNN focuses when making predictions
 - Heatmaps update dynamically for **user-selected labels**
 - Helps verify model focus and detect spurious correlations
+- Adjustable heatmap intensity slider
 
 ---
 
-## Vision-Language Integration (BLIP)
+## Vision-Language Integration (BLIP, Optional)
 
 - Generates captions describing uploaded images
-- Adds semantic context beyond CIFAR labels
-- Supports verification and keyword-to-class mapping
+- Adds semantic context beyond class labels
+- Supports keyword-to-class mapping and feedback alignment
 
 ---
 
@@ -173,7 +141,7 @@ The model is intentionally simple to emphasize **system design, explainability, 
 
 - BLIP captions are parsed into keywords mapped to possible classes
 - User corrections (via top-3 or "Other") update session mapping
-- Feedback persists in JSON + CSV
+- Feedback persists in CSV and JSON
 - Grad-CAM overlays reflect user-selected labels
 - No model retraining required
 
@@ -181,14 +149,21 @@ The model is intentionally simple to emphasize **system design, explainability, 
 
 ## Installation
 
-```bash
-git clone https://github.com/O-S-O-K/explainable-ai-app.git
-cd explainable-ai-app
-conda create -n xai-app python=3.10
-conda activate xai-app
-pip install -r requirements.txt
-streamlit run app/app.py
-```
+Clone the repository and navigate into it:  
+    git clone https://github.com/O-S-O-K/insight-ai-app.git  
+    cd explainable-ai-app  
+
+Create a Python environment and activate it:  
+    conda create -n xai-app python=3.10  
+    conda activate xai-app  
+
+Install dependencies:  
+    pip install -r requirements.txt  
+
+Run the app:  
+    streamlit run app/app.py  
+
+(Optional) Place a fine-tuned model in `models/cnn_model_finetuned.h5`.
 
 ---
 
@@ -198,8 +173,8 @@ streamlit run app/app.py
 - TensorFlow / Keras (CNN)
 - Streamlit (Web Interface)
 - Grad-CAM (Dynamic visualizations)
-- BLIP (Vision–Language Model)
-- NumPy, OpenCV, PIL
+- Optional BLIP (Vision–Language Model)
+- NumPy, PIL, OpenCV
 - JSON + CSV persistence for feedback-driven learning
 
 ---
@@ -216,35 +191,42 @@ streamlit run app/app.py
 - Modular, production-oriented Python code
 - Deployable interactive ML app with Streamlit
 
-This project shows how ML systems can **learn from users**, adapt to ambiguity, and become more trustworthy and interpretable.
+Shows how ML systems can **learn from users**, adapt to ambiguity, and become more interpretable.
 
 ---
 
 ## Example Test Session (End-to-End)
 
-1. Upload an image of a dog on a couch
+1. Upload an image of a dog on a couch  
 2. CNN Prediction:
    - german_shepherd: 74.02%
    - tabby: 1.81%
    - tiger_cat: 1.07%
-3. BLIP Caption: "a cat and dog sitting on a couch"
-4. Initial BLIP → Class Mapping: ["beagle", "bloodhound", "golden_retriever"]
-5. User Feedback: Top prediction wrong → selects "Other" → correct class `german_shepherd`
-6. Grad-CAM overlay updates for `german_shepherd`
-7. System Action: Updates dynamic mapping file
+3. BLIP Caption: "a cat and dog sitting on a couch"  
+4. Initial BLIP → Class Mapping: ["beagle", "bloodhound", "golden_retriever"]  
+5. User Feedback: Top prediction wrong → selects "Other" → correct class `german_shepherd`  
+6. Grad-CAM overlay updates for `german_shepherd`  
+7. System Action: Updates dynamic mapping file  
 8. Result: User-driven explainability and feedback loop, no retraining required
 
 ---
 
 ## 🌍 Deployment
 
-This app is deployed using **Streamlit Cloud** and is accessible at:
+Deployed using **Streamlit Cloud**:  
+👉 https://insight-ai-v1.streamlit.app  
 
-👉 https://insight-ai-v1.streamlit.app
+Mobile-compatible and runs entirely in the browser.
 
-The app is mobile-compatible and runs entirely in the browser.
+---
 
 ## Author
 
 Sheron Schley  
 Focus Areas: Data Science, Deep Learning, Explainable AI, Applied Machine Learning Systems
+
+---
+
+## License
+
+This project is licensed under the **MIT License** — see the `LICENSE` file for details. You are free to use, modify, and redistribute this project with attribution.

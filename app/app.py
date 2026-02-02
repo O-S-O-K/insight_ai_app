@@ -49,7 +49,7 @@ from utils.gradcam import (
 st.set_page_config(page_title="InsightAI", layout="wide")
 
 # ======================================================
-# SESSION SAFETY (ABSOLUTE)
+# SESSION STATE SAFETY
 # ======================================================
 for k in ["last_image_hash", "feedback_submitted", "feedback"]:
     if k not in st.session_state:
@@ -76,9 +76,8 @@ def load_model_metadata():
         "last_updated": "N/A",
     }
 
-
 # ======================================================
-# LOAD MODEL (NO REGRESSION)
+# LOAD MODEL
 # ======================================================
 @st.cache_resource
 def load_cnn_model():
@@ -93,7 +92,6 @@ def load_cnn_model():
     else:
         model = MobileNetV2(weights="imagenet", include_top=True)
         source = "ImageNet pretrained"
-
     return model, source
 
 
@@ -133,10 +131,10 @@ if uploaded_file:
         st.session_state.feedback = None
 
     img = Image.open(uploaded_file).convert("RGB")
-    st.image(img, caption="Uploaded Image", use_column_width=True)
+    st.image(img, caption="Uploaded Image", width="content")
 
     # ======================================================
-    # PREDICTIONS (IMAGENET SAFE)
+    # PREDICTIONS
     # ======================================================
     img_resized = img.resize((224, 224))
     x = preprocess_input(np.expand_dims(np.array(img_resized), 0))
@@ -152,21 +150,20 @@ if uploaded_file:
     # GRAD-CAM
     # ======================================================
     st.subheader("🔥 Grad-CAM Explanation")
-
     last_conv = find_last_conv_layer(model)
     heatmap = get_gradcam_heatmap(
         model,
         last_conv,
         x,
-        pred_index=np.argmax(preds[0]),
+        pred_index=np.argmax(preds[0]),  # optional; can remove to default top prediction
     )
 
     alpha = st.slider("Heatmap intensity", 0.2, 0.7, 0.4, 0.05)
     cam_img = overlay_heatmap(heatmap, img, alpha)
 
     c1, c2 = st.columns(2)
-    c1.image(img, caption="Original", use_column_width=True)
-    c2.image(cam_img, caption="Grad-CAM", use_column_width=True)
+    c1.image(img, caption="Original", width="content")
+    c2.image(cam_img, caption="Grad-CAM", width="content")
 
     # ======================================================
     # FEEDBACK
