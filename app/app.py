@@ -21,13 +21,17 @@ from utils.gradcam import (
     get_gradcam_heatmap,
     overlay_heatmap,
 )
+from utils.blip_caption import generate_blip_caption
 
 # -----------------------------
 # Config
 # -----------------------------
 IMG_SIZE = (224, 224)
-MODEL_PATH = ROOT / "models/cnn_model_finetuned.h5"
-BASE_MODEL_PATH = ROOT / "models/cnn_model.h5"
+
+# Canonical models (NO regression)
+FINETUNED_MODEL = ROOT / "models/cnn_baseline_functional.h5"
+BASE_MODEL = ROOT / "models/cnn_baseline.h5"
+
 LABELS_PATH = ROOT / "models/label_map.json"
 
 FEEDBACK_CSV = ROOT / "feedback_log.csv"
@@ -47,8 +51,8 @@ for k in ["last_hash", "submitted", "feedback"]:
 # -----------------------------
 @st.cache_resource
 def load_assets():
-    model_path = MODEL_PATH if MODEL_PATH.exists() else BASE_MODEL_PATH
-    model = load_model(model_path)
+    model_path = FINETUNED_MODEL if FINETUNED_MODEL.exists() else BASE_MODEL
+    model = load_model(model_path, compile=False)
 
     if not LABELS_PATH.exists():
         st.error("label_map.json missing — retrain at least once.")
@@ -84,7 +88,7 @@ if uploaded:
         st.session_state.feedback = None
 
     img = Image.open(uploaded).convert("RGB")
-    st.image(img, caption="Uploaded image", width="content")
+    st.image(img, caption="Uploaded image", use_column_width=True)
 
     # -----------------------------
     # Prediction
@@ -96,27 +100,36 @@ if uploaded:
         st.write(f"{i}. **{lbl}** — {score*100:.2f}%")
 
     # -----------------------------
-    # Grad-CAM
+    # Grad-CAM (TOP prediction only)
     # -----------------------------
     img_resized = img.resize(IMG_SIZE)
     tensor = preprocess_input(np.expand_dims(np.array(img_resized), 0))
 
     last_conv = find_last_conv_layer(model)
+    top_class_idx = preds[0][2]  # ← real predicted class index
+
     heatmap = get_gradcam_heatmap(
         model,
         last_conv,
         tensor,
-        class_idx=list(label_map.keys())[0],
+        class_idx=top_class_idx,
     )
 
     cam = overlay_heatmap(heatmap, img)
 
     c1, c2 = st.columns(2)
-    c1.image(img, caption="Original", width="content")
-    c2.image(cam, caption="Grad-CAM", width="content")
+    c1.image(img, caption="Original", use_column_width=True)
+    c2.image(cam, caption="Grad-CAM", use_column_width=True)
 
     # -----------------------------
-    # Feedback
+    # Caption (RESTORED)
+    # -----------------------------
+    st.subheader("📝 Image Caption")
+    caption = generate_blip_caption(img)
+    st.write(caption)
+
+    # -----------------------------
+    # Feedback (retrain-safe)
     # -----------------------------
     st.subheader("🧠 Feedback")
 
@@ -143,7 +156,7 @@ if uploaded:
                 }
 
                 df = pd.read_csv(FEEDBACK_CSV) if FEEDBACK_CSV.exists() else pd.DataFrame()
-                df = pd.concat([df, pd.DataFrame([entry])])
+                df = pd.concat([df, pd.DataFrame([entry])], ignore_index=True)
                 df.to_csv(FEEDBACK_CSV, index=False)
 
                 st.session_state.submitted = True
