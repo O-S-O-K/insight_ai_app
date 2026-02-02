@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 import streamlit as st
 import numpy as np
-from PIL import Image
+from PIL import Image, ExifTags
 import pandas as pd
 import hashlib
 
@@ -65,6 +65,29 @@ def get_file_hash(uploaded_file):
     uploaded_file.seek(0)
     return hashlib.md5(data).hexdigest()
 
+def load_image_with_exif(uploaded_file):
+    """Load an image and apply EXIF orientation if present (fixes mobile sideways images)."""
+    img = Image.open(uploaded_file)
+    
+    try:
+        # Find the EXIF orientation tag
+        for orientation in ExifTags.TAGS.keys():
+            if ExifTags.TAGS[orientation] == "Orientation":
+                break
+        
+        exif = img._getexif()
+        if exif is not None:
+            orientation_value = exif.get(orientation)
+            if orientation_value == 3:
+                img = img.rotate(180, expand=True)
+            elif orientation_value == 6:
+                img = img.rotate(270, expand=True)
+            elif orientation_value == 8:
+                img = img.rotate(90, expand=True)
+    except Exception:
+        pass  # No EXIF data or corrupt
+    
+    return img.convert("RGB")
 # ======================================================
 # LOAD MODEL
 # ======================================================
@@ -108,7 +131,7 @@ if uploaded_file:
                 del st.session_state[k]
 
     # Load image
-    img = Image.open(uploaded_file).convert("RGB")
+    img = load_image_with_exif(uploaded_file)
     st.image(img, caption="Uploaded Image", width="content")
 
     # -----------------------------
