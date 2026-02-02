@@ -1,109 +1,67 @@
-# ======================================================
-# retrain_cnn.py - Fine-tune canonical CNN with user feedback
-# ======================================================
-
-import pandas as pd
 import numpy as np
+import pandas as pd
 from pathlib import Path
-from tensorflow.keras.models import load_model
-from tensorflow.keras.optimizers import Adam
-from tensorflow.keras.utils import to_categorical
-from tensorflow.keras.preprocessing.image import img_to_array
-from sklearn.preprocessing import LabelEncoder
 from PIL import Image
 
-# -----------------------------
-# Paths
-# -----------------------------
-ROOT_DIR = Path(__file__).resolve().parents[0]
-FEEDBACK_CSV = ROOT_DIR / "feedback_log.csv"
-FEEDBACK_IMG_DIR = ROOT_DIR / "feedback_images"
-MODEL_PATH = ROOT_DIR / "models/cnn_baseline_functional.h5"
-FINETUNED_MODEL_PATH = ROOT_DIR / "models/cnn_model_finetuned.h5"
+from tensorflow.keras.applications import MobileNetV2
+from tensorflow.keras.applications.mobilenet_v2 import preprocess_input
+from tensorflow.keras.layers import GlobalAveragePooling2D, Dense
+from tensorflow.keras.models import Model, load_model
+from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.utils import to_categorical
+from sklearn.preprocessing import LabelEncoder
+
+ROOT = Path(__file__).parent
+IMG_DIR = ROOT / "feedback_images"
+CSV = ROOT / "feedback_log.csv"
+MODEL_OUT = ROOT / "models/cnn_model_finetuned.h5"
 
 IMG_SIZE = (224, 224)
-EPOCHS = 5
-BATCH_SIZE = 8
 
-# -----------------------------
-# Load feedback
-# -----------------------------
-if not FEEDBACK_CSV.exists():
-    print("No feedback CSV found. Exiting.")
-    exit(0)
+if not CSV.exists():
+    print("No feedback yet.")
+    exit()
 
-df = pd.read_csv(FEEDBACK_CSV)
-if df.empty:
-    print("Feedback CSV is empty. Nothing to retrain.")
-    exit(0)
-
-# -----------------------------
-# EXIF-safe image loader
-# -----------------------------
-def load_image_safe(path):
-    img = Image.open(path)
-    try:
-        exif = img._getexif()
-        if exif is not None:
-            orientation = exif.get(274)
-            if orientation == 3:
-                img = img.rotate(180, expand=True)
-            elif orientation == 6:
-                img = img.rotate(270, expand=True)
-            elif orientation == 8:
-                img = img.rotate(90, expand=True)
-    except Exception:
-        pass
-    return img.resize(IMG_SIZE)
-
-# -----------------------------
-# Load images and labels
-# -----------------------------
+df = pd.read_csv(CSV)
 X, y = [], []
-skipped = 0
 
 for _, row in df.iterrows():
-    filename = row.get("uploaded_filename")
-    if not isinstance(filename, str) or not filename.strip():
-        skipped += 1
+    img_path = IMG_DIR / row["uploaded_filename"]
+    if not img_path.exists():
         continue
 
-    img_path = FEEDBACK_IMG_DIR / filename
-    if img_path.exists():
-        img = load_image_safe(img_path)
-        X.append(img_to_array(img)/255.0)
-        y.append(row["user_label"])
-    else:
-        skipped += 1
-
-if len(X) == 0:
-    print(f"No valid images to retrain. Skipped {skipped} entries.")
-    exit(0)
+    img = Image.open(img_path).convert("RGB").resize(IMG_SIZE)
+    arr = preprocess_input(np.array(img))
+    X.append(arr)
+    y.append(row["user_label"])
 
 X = np.array(X)
 
-# -----------------------------
-# Encode labels
-# -----------------------------
 le = LabelEncoder()
-y_encoded = le.fit_transform(y)
-y_categorical = to_categorical(y_encoded, num_classes=len(le.classes_))
+y_enc = le.fit_transform(y)
+y_cat = to_categorical(y_enc)
 
-# -----------------------------
-# Load canonical CNN
-# -----------------------------
-if not MODEL_PATH.exists():
-    print(f"Original model not found at {MODEL_PATH}. Exiting.")
-    exit(0)
+base = MobileNetV2(
+    weights="imagenet",
+    include_top=False,
+    input_shape=(224,224,3)
+)
 
-model = load_model(MODEL_PATH)
-model.compile(optimizer=Adam(1e-4), loss="categorical_crossentropy", metrics=["accuracy"])
-print("Loaded original CNN model.")
+base.trainable = False
 
-# -----------------------------
-# Fine-tune
-# -----------------------------
-print(f"Training on {len(X)} feedback images...")
-model.fit(X, y_categorical, epochs=EPOCHS, batch_size=BATCH_SIZE, validation_split=0.2, shuffle=True)
-model.save(FINETUNED_MODEL_PATH)
-print(f"Fine-tuned model saved at {FINETUNED_MODEL_PATH}")
+x = GlobalAveragePooling2D()(base.output)
+output = Dense(len(le.classes_), activation="softmax")(x)
+model = Model(base.input, output)
+
+model.compile(
+    optimizer=Adam(1e-4),
+    loss="categorical_crossentropy",
+    metrics=["accuracy"]
+)
+
+model.fit(X, y_cat, epochs=5, batch_size=8, validation_split=0.2)
+
+MODEL_OUT.parent.mkdir(exist_ok=True)
+model.save(MODEL_OUT)
+
+print("Fine-tuned MobileNetV2 saved.")
