@@ -19,7 +19,7 @@ from tensorflow.keras.preprocessing.image import img_to_array
 ROOT_DIR = Path(__file__).resolve().parents[0]
 FEEDBACK_CSV = ROOT_DIR / "feedback_log.csv"
 FEEDBACK_IMG_DIR = ROOT_DIR / "feedback_images"
-MODEL_PATH = ROOT_DIR / "models/cnn_model.h5"
+MODEL_PATH = ROOT_DIR / "models/cnn_baseline_functional.h5"
 FINETUNED_MODEL_PATH = ROOT_DIR / "models/cnn_model_finetuned.h5"
 
 # -----------------------------
