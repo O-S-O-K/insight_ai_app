@@ -1,6 +1,5 @@
 # ======================================================
 # InsightAI - Explainable Image Classification App
-# (Streamlit Cloud–safe session state)
 # ======================================================
 
 import os
@@ -27,6 +26,7 @@ from utils.gradcam import (
 )
 from utils.blip_caption import generate_blip_caption
 from tensorflow.keras.applications.mobilenet_v2 import preprocess_input
+from tensorflow.keras.models import load_model as keras_load_model
 
 # ======================================================
 # CONFIG / FEATURE FLAGS
@@ -41,7 +41,7 @@ FEEDBACK_IMG_DIR.mkdir(exist_ok=True)
 st.set_page_config(page_title="InsightAI", layout="wide")
 
 # ======================================================
-# 🔒 ABSOLUTE SESSION STATE INITIALIZATION
+# 🔒 SESSION STATE INITIALIZATION
 # ======================================================
 SESSION_DEFAULTS = {
     "last_image_hash": None,
@@ -83,11 +83,22 @@ def load_image_with_exif(uploaded_file):
     return img.convert("RGB")
 
 # ======================================================
-# LOAD MODEL
+# LOAD MODEL (auto fine-tuned if exists)
 # ======================================================
 @st.cache_resource
 def load_model():
-    return load_cnn_model()
+    finetuned_path = ROOT_DIR / "models/cnn_model_finetuned.h5"
+    base_path = ROOT_DIR / "models/cnn_model.h5"
+
+    if finetuned_path.exists():
+        st.info("Loading fine-tuned CNN model...")
+        return keras_load_model(finetuned_path)
+    elif base_path.exists():
+        st.info("Loading base CNN model...")
+        return keras_load_model(base_path)
+    else:
+        st.error("No CNN model found! Please ensure cnn_model.h5 exists in models/")
+        st.stop()
 
 model = load_model()
 
@@ -190,7 +201,7 @@ if uploaded_file:
                 st.warning("Please provide a valid label.")
             else:
                 # -----------------------------
-                # Save uploaded image for retraining
+                # Save uploaded image for retraining (EXIF-corrected)
                 # -----------------------------
                 FEEDBACK_IMG_DIR.mkdir(exist_ok=True)
                 uploaded_file.seek(0)

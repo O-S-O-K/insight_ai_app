@@ -1,5 +1,6 @@
 # ======================================================
 # retrain_cnn.py - Fine-tune CNN with user feedback
+# Robust version: skips invalid/missing filenames
 # ======================================================
 
 import pandas as pd
@@ -37,6 +38,7 @@ if df.empty:
 # EXIF-safe image loader
 # -----------------------------
 def load_image_exif_safe(path):
+    """Load an image and apply EXIF rotation if present (mobile-safe)."""
     img = Image.open(path)
     try:
         for orientation in ExifTags.TAGS.keys():
@@ -59,21 +61,30 @@ def load_image_exif_safe(path):
 # Load images and labels
 # -----------------------------
 X, y = [], []
+skipped = 0
+
 for _, row in df.iterrows():
-    img_path = FEEDBACK_IMG_DIR / row["uploaded_filename"]
+    filename = row.get("uploaded_filename")
+    if not isinstance(filename, str) or not filename.strip():
+        print(f"Skipping invalid filename: {filename}")
+        skipped += 1
+        continue
+
+    img_path = FEEDBACK_IMG_DIR / filename
     if img_path.exists():
         img = load_image_exif_safe(img_path)
         X.append(img_to_array(img) / 255.0)
         y.append(row["user_label"])
     else:
         print(f"Warning: Image not found: {img_path}")
+        skipped += 1
 
 if len(X) == 0:
-    print("No valid images found. Exiting.")
+    print(f"No valid images found. Skipped {skipped} invalid entries. Exiting.")
     exit(0)
 
 X = np.array(X)
-print(f"Loaded {len(X)} feedback images for retraining.")
+print(f"Loaded {len(X)} feedback images for retraining. Skipped {skipped} entries.")
 
 # -----------------------------
 # Encode labels
@@ -115,3 +126,10 @@ print("Fine-tuning complete.")
 FINETUNED_MODEL_PATH.parent.mkdir(exist_ok=True)
 model.save(FINETUNED_MODEL_PATH)
 print(f"Fine-tuned model saved at {FINETUNED_MODEL_PATH}")
+
+# -----------------------------
+# Optional: Clear feedback CSV after retraining
+# -----------------------------
+# Uncomment if you want to reset feedback log
+# FEEDBACK_CSV.unlink()
+# print("Feedback CSV cleared.")
