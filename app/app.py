@@ -109,7 +109,7 @@ if uploaded_file:
 
     # Load image
     img = Image.open(uploaded_file).convert("RGB")
-    st.image(img, caption="Uploaded Image", use_column_width=True)
+    st.image(img, caption="Uploaded Image", width=None)
 
     # -----------------------------
     # Predictions
@@ -138,8 +138,8 @@ if uploaded_file:
     cam_img = overlay_heatmap(heatmap, img, alpha)
 
     c1, c2 = st.columns(2)
-    c1.image(img, caption="Original", use_column_width=True)
-    c2.image(cam_img, caption="Grad-CAM", use_column_width=True)
+    c1.image(img, caption="Original", width=None)
+    c2.image(cam_img, caption="Grad-CAM", width=None)
 
     # -----------------------------
     # Feedback
