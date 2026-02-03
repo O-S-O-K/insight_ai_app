@@ -11,7 +11,7 @@ from pathlib import Path
 import streamlit as st
 import numpy as np
 import pandas as pd
-from PIL import Image, ExifTags
+from PIL import Image, ImageOps
 
 import tensorflow as tf
 from tensorflow.keras.models import load_model
@@ -52,7 +52,7 @@ from utils.gradcam import (
 st.set_page_config(page_title="InsightAI", layout="wide")
 
 # ======================================================
-# SESSION SAFETY (ABSOLUTE)
+# SESSION SAFETY
 # ======================================================
 for k in [
     "last_image_hash",
@@ -104,23 +104,13 @@ def load_blip_model():
 
 
 def load_image_with_orientation(uploaded_file):
-    img = Image.open(uploaded_file).convert("RGB")
-    try:
-        for orientation in ExifTags.TAGS.keys():
-            if ExifTags.TAGS[orientation] == "Orientation":
-                break
-
-        exif = img._getexif()
-        if exif is not None:
-            orientation_value = exif.get(orientation, None)
-            if orientation_value == 3:
-                img = img.rotate(180, expand=True)
-            elif orientation_value == 6:
-                img = img.rotate(270, expand=True)
-            elif orientation_value == 8:
-                img = img.rotate(90, expand=True)
-    except Exception:
-        pass
+    """
+    Loads an image from Streamlit uploader and auto-rotates according to EXIF.
+    Works for mobile and desktop images.
+    """
+    img = Image.open(uploaded_file)
+    img = ImageOps.exif_transpose(img)  # auto-rotate
+    img = img.convert("RGB")
     return img
 
 
@@ -144,7 +134,7 @@ blip_processor, blip_model = load_blip_model()
 st.title("🧠 InsightAI")
 st.subheader("Explainable Image Classification with Human Feedback")
 
-with st.expander("ℹ️ Model Information", expanded=True):
+with st.expander("ℹ️ Model Information", expanded=False):
     st.markdown(
         f"""
 **Model source:** {model_source}  
