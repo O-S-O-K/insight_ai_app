@@ -32,23 +32,20 @@ def find_last_conv_layer(model):
     raise ValueError("No Conv2D layer found")
 
 
-def get_gradcam_heatmap(model, last_conv_layer, img_tensor, pred_index=None):
+def get_gradcam_heatmap(model, last_conv_layer, img_tensor, class_idx=None):
     """
-    Compute Grad-CAM heatmap for the given image tensor and class index.
-
-    Args:
-        model: Keras model
-        last_conv_layer: last Conv2D layer
-        img_tensor: preprocessed image tensor (1, H, W, C)
-        pred_index: integer index of class to compute Grad-CAM for
+    Generates a Grad-CAM heatmap for the specified class index.
     """
-    grad_model = Model([model.inputs], [last_conv_layer.output, model.output])
+    grad_model = Model(
+        [model.inputs],
+        [last_conv_layer.output, model.output]
+    )
 
     with tf.GradientTape() as tape:
         conv_out, preds = grad_model(img_tensor)
-        if pred_index is None:
-            pred_index = tf.argmax(preds[0])
-        loss = preds[:, pred_index]
+        if class_idx is None:
+            class_idx = tf.argmax(preds[0])
+        loss = preds[:, class_idx]
 
     grads = tape.gradient(loss, conv_out)
     pooled_grads = tf.reduce_mean(grads, axis=(0, 1, 2))
@@ -58,6 +55,7 @@ def get_gradcam_heatmap(model, last_conv_layer, img_tensor, pred_index=None):
     heatmap = tf.squeeze(heatmap)
     heatmap = tf.maximum(heatmap, 0) / tf.reduce_max(heatmap)
     return heatmap.numpy()
+
 
 def overlay_heatmap(heatmap, image, alpha=0.4):
     heatmap = np.uint8(255 * heatmap)

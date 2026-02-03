@@ -18,6 +18,9 @@ from tensorflow.keras.models import load_model
 from tensorflow.keras.applications import MobileNetV2
 from tensorflow.keras.applications.mobilenet_v2 import preprocess_input, decode_predictions
 
+# Optional BLIP
+from transformers import BlipProcessor, BlipForConditionalGeneration
+
 # ======================================================
 # PATHS
 # ======================================================
@@ -51,7 +54,12 @@ st.set_page_config(page_title="InsightAI", layout="wide")
 # ======================================================
 # SESSION SAFETY (ABSOLUTE)
 # ======================================================
-for k in ["last_image_hash", "feedback_submitted", "feedback"]:
+for k in [
+    "last_image_hash",
+    "feedback_submitted",
+    "feedback",
+    "blip_caption",
+]:
     if k not in st.session_state:
         st.session_state[k] = None
 
@@ -79,25 +87,24 @@ def load_model_metadata():
 
 @st.cache_resource
 def load_cnn_model():
-    """
-    Priority:
-    1. Fine-tuned model (if exists)
-    2. Pretrained MobileNetV2 (ImageNet)
-    """
     if FINETUNED_MODEL_PATH.exists():
         model = load_model(FINETUNED_MODEL_PATH, compile=False)
         source = "Fine-tuned model"
     else:
         model = MobileNetV2(weights="imagenet", include_top=True)
         source = "ImageNet pretrained"
-
     return model, source
+
+
+@st.cache_resource
+def load_blip_model():
+    processor = BlipProcessor.from_pretrained("Salesforce/blip-image-captioning-base")
+    model = BlipForConditionalGeneration.from_pretrained("Salesforce/blip-image-captioning-base")
+    return processor, model
 
 
 def load_image_with_orientation(uploaded_file):
     img = Image.open(uploaded_file).convert("RGB")
-
-    # Auto-rotate based on EXIF orientation
     try:
         for orientation in ExifTags.TAGS.keys():
             if ExifTags.TAGS[orientation] == "Orientation":
@@ -106,7 +113,6 @@ def load_image_with_orientation(uploaded_file):
         exif = img._getexif()
         if exif is not None:
             orientation_value = exif.get(orientation, None)
-
             if orientation_value == 3:
                 img = img.rotate(180, expand=True)
             elif orientation_value == 6:
@@ -115,14 +121,22 @@ def load_image_with_orientation(uploaded_file):
                 img = img.rotate(90, expand=True)
     except Exception:
         pass
-
     return img
 
+
+def generate_blip_caption(processor, model, image):
+    inputs = processor(images=image, return_tensors="pt")
+    out = model.generate(**inputs)
+    caption = processor.decode(out[0], skip_special_tokens=True)
+    return caption
+
+
 # ======================================================
-# LOAD MODEL & METADATA
+# LOAD MODELS & METADATA
 # ======================================================
 model, model_source = load_cnn_model()
 meta = load_model_metadata()
+blip_processor, blip_model = load_blip_model()
 
 # ======================================================
 # HEADER
@@ -150,15 +164,14 @@ uploaded_file = st.file_uploader("Upload an image", type=["jpg", "jpeg", "png"])
 if uploaded_file:
     img_hash = file_hash(uploaded_file)
 
-    # Reset state on new image
     if st.session_state.last_image_hash != img_hash:
         st.session_state.last_image_hash = img_hash
         st.session_state.feedback_submitted = False
         st.session_state.feedback = None
+        st.session_state.blip_caption = None
 
-    # Load image with orientation fix
     img = load_image_with_orientation(uploaded_file)
-    st.image(img, caption="Uploaded Image", use_column_width=True)
+    st.image(img, caption="Uploaded Image", width="content")
 
     # ======================================================
     # PREDICTIONS
@@ -177,7 +190,6 @@ if uploaded_file:
     # GRAD-CAM
     # ======================================================
     st.subheader("🔥 Grad-CAM Explanation")
-
     last_conv = find_last_conv_layer(model)
     heatmap = get_gradcam_heatmap(
         model,
@@ -190,14 +202,21 @@ if uploaded_file:
     cam_img = overlay_heatmap(heatmap, img, alpha)
 
     c1, c2 = st.columns(2)
-    c1.image(img, caption="Original", use_column_width=True)
-    c2.image(cam_img, caption="Grad-CAM", use_column_width=True)
+    c1.image(img, caption="Original", width="content")
+    c2.image(cam_img, caption="Grad-CAM", width="content")
+
+    # ======================================================
+    # BLIP CAPTION
+    # ======================================================
+    st.subheader("📝 BLIP Caption (Vision-Language)")
+    if st.session_state.blip_caption is None:
+        st.session_state.blip_caption = generate_blip_caption(blip_processor, blip_model, img)
+    st.write(st.session_state.blip_caption)
 
     # ======================================================
     # FEEDBACK
     # ======================================================
     st.subheader("🧠 Human Feedback")
-
     if not st.session_state.feedback_submitted:
         correct = st.radio(
             "Was the model’s top prediction correct?",
@@ -223,6 +242,7 @@ if uploaded_file:
                     "model_prediction": decoded[0][1],
                     "user_label": user_label,
                     "was_correct": correct,
+                    "blip_caption": st.session_state.blip_caption,
                 }
 
                 df = pd.read_csv(FEEDBACK_CSV) if FEEDBACK_CSV.exists() else pd.DataFrame()
