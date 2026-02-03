@@ -104,13 +104,21 @@ def load_blip_model():
 
 
 def load_image_with_orientation(uploaded_file):
-    """
-    Loads an image from Streamlit uploader and auto-rotates according to EXIF.
-    Works for mobile and desktop images.
-    """
+    """Load and auto-rotate mobile/desktop images."""
     img = Image.open(uploaded_file)
-    img = ImageOps.exif_transpose(img)  # auto-rotate
+    img = ImageOps.exif_transpose(img)
     img = img.convert("RGB")
+    return img
+
+
+def resize_for_mobile(img, max_pixels=1024):
+    """Downscale large images for mobile to prevent memory issues."""
+    w, h = img.size
+    max_dim = max(w, h)
+    if max_dim > max_pixels:
+        scale = max_pixels / max_dim
+        new_size = (int(w * scale), int(h * scale))
+        img = img.resize(new_size)
     return img
 
 
@@ -161,13 +169,16 @@ if uploaded_file:
         st.session_state.blip_caption = None
 
     img = load_image_with_orientation(uploaded_file)
+    img = resize_for_mobile(img)
     st.image(img, caption="Uploaded Image", width="content")
 
     # ======================================================
     # PREDICTIONS
     # ======================================================
     img_resized = img.resize((224, 224))
-    x = preprocess_input(np.expand_dims(np.array(img_resized), 0))
+    x = np.array(img_resized).astype(np.float32)
+    x = np.expand_dims(x, 0)
+    x = preprocess_input(x)
 
     preds = model.predict(x)
     decoded = decode_predictions(preds, top=3)[0]
