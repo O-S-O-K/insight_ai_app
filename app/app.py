@@ -11,7 +11,7 @@ from pathlib import Path
 import streamlit as st
 import numpy as np
 import pandas as pd
-from PIL import Image
+from PIL import Image, ExifTags
 
 import tensorflow as tf
 from tensorflow.keras.models import load_model
@@ -49,7 +49,7 @@ from utils.gradcam import (
 st.set_page_config(page_title="InsightAI", layout="wide")
 
 # ======================================================
-# SESSION STATE SAFETY
+# SESSION SAFETY (ABSOLUTE)
 # ======================================================
 for k in ["last_image_hash", "feedback_submitted", "feedback"]:
     if k not in st.session_state:
@@ -76,9 +76,7 @@ def load_model_metadata():
         "last_updated": "N/A",
     }
 
-# ======================================================
-# LOAD MODEL
-# ======================================================
+
 @st.cache_resource
 def load_cnn_model():
     """
@@ -92,9 +90,37 @@ def load_cnn_model():
     else:
         model = MobileNetV2(weights="imagenet", include_top=True)
         source = "ImageNet pretrained"
+
     return model, source
 
 
+def load_image_with_orientation(uploaded_file):
+    img = Image.open(uploaded_file).convert("RGB")
+
+    # Auto-rotate based on EXIF orientation
+    try:
+        for orientation in ExifTags.TAGS.keys():
+            if ExifTags.TAGS[orientation] == "Orientation":
+                break
+
+        exif = img._getexif()
+        if exif is not None:
+            orientation_value = exif.get(orientation, None)
+
+            if orientation_value == 3:
+                img = img.rotate(180, expand=True)
+            elif orientation_value == 6:
+                img = img.rotate(270, expand=True)
+            elif orientation_value == 8:
+                img = img.rotate(90, expand=True)
+    except Exception:
+        pass
+
+    return img
+
+# ======================================================
+# LOAD MODEL & METADATA
+# ======================================================
 model, model_source = load_cnn_model()
 meta = load_model_metadata()
 
@@ -130,8 +156,9 @@ if uploaded_file:
         st.session_state.feedback_submitted = False
         st.session_state.feedback = None
 
-    img = Image.open(uploaded_file).convert("RGB")
-    st.image(img, caption="Uploaded Image", width="content")
+    # Load image with orientation fix
+    img = load_image_with_orientation(uploaded_file)
+    st.image(img, caption="Uploaded Image", use_column_width=True)
 
     # ======================================================
     # PREDICTIONS
@@ -150,20 +177,21 @@ if uploaded_file:
     # GRAD-CAM
     # ======================================================
     st.subheader("🔥 Grad-CAM Explanation")
+
     last_conv = find_last_conv_layer(model)
     heatmap = get_gradcam_heatmap(
         model,
         last_conv,
         x,
-        pred_index=np.argmax(preds[0]),  # optional; can remove to default top prediction
+        class_idx=np.argmax(preds[0]),
     )
 
     alpha = st.slider("Heatmap intensity", 0.2, 0.7, 0.4, 0.05)
     cam_img = overlay_heatmap(heatmap, img, alpha)
 
     c1, c2 = st.columns(2)
-    c1.image(img, caption="Original", width="content")
-    c2.image(cam_img, caption="Grad-CAM", width="content")
+    c1.image(img, caption="Original", use_column_width=True)
+    c2.image(cam_img, caption="Grad-CAM", use_column_width=True)
 
     # ======================================================
     # FEEDBACK
