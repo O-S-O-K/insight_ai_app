@@ -151,7 +151,7 @@ This architecture emphasizes **system design, explainability, and feedback integ
 
 Clone the repository and navigate into it:  
     git clone https://github.com/O-S-O-K/insight_ai_app.git  
-    cd explainable-ai-app  
+    cd insight_ai_app  
 
 Create a Python environment and activate it:  
     conda create -n xai-app python=3.10  
