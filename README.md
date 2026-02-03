@@ -1,6 +1,6 @@
 # InsightAI: Interactive Image Classification with Feedback
 
-[![Python](https://img.shields.io/badge/python-3.10-blue)](https://www.python.org/) [![Streamlit](https://img.shields.io/badge/Streamlit-v1.27-orange)](https://streamlit.io/) [![License: MIT](https://img.shields.io/badge/License-MIT-green)](LICENSE) [![Live Demo](https://img.shields.io/badge/Live-Demo-brightgreen)](https://insight-ai-v1.streamlit.app) [![Last Commit](https://img.shields.io/github/last-commit/O-S-O-K/insight-ai-app)](https://github.com/O-S-O-K/insight-ai-app)
+[![Python](https://img.shields.io/badge/python-3.10-blue)](https://www.python.org/) [![Streamlit](https://img.shields.io/badge/Streamlit-v1.27-orange)](https://streamlit.io/) [![License: MIT](https://img.shields.io/badge/License-MIT-green)](LICENSE) [![Live Demo](https://img.shields.io/badge/Live-Demo-brightgreen)](https://insight-ai-v1.streamlit.app) [![Last Commit](https://img.shields.io/github/last-commit/O-S-O-K/insight_ai_app)](https://github.com/O-S-O-K/insight_ai_app)
 
 ### An interactive Streamlit app combining CNN predictions, Grad-CAM explanations, optional BLIP captions, and human-in-the-loop feedback for smarter, interpretable AI.
 
