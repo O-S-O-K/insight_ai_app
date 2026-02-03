@@ -150,7 +150,7 @@ This architecture emphasizes **system design, explainability, and feedback integ
 ## Installation
 
 Clone the repository and navigate into it:  
-    git clone https://github.com/O-S-O-K/insight-ai-app.git  
+    git clone https://github.com/O-S-O-K/insight_ai_app.git  
     cd explainable-ai-app  
 
 Create a Python environment and activate it:  
