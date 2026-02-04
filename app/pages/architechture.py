@@ -3,44 +3,44 @@ import streamlit as st
 st.set_page_config(page_title="Architecture · Insight AI", layout="centered")
 
 st.title("🏗️ Architecture Overview")
-st.caption("How data flows through Insight AI from image upload to human-readable insight")
-
-st.divider()
-
-st.subheader("🔄 High-Level Pipeline (with Feedback Loop)")
-
+st.caption("How data flows through Insight AI: frontend (Streamlit) and backend (FastAPI) from image upload to human-readable insight, with a feedback loop.")
 st.markdown(
     """
     ```text
     User Image Upload
-            │
-            ▼
+        │
+        ▼
     Image Preprocessing
     (resize, normalize)
-            │
-            ├───────────────┐
-            ▼               ▼
+        │
+        ├───────────────┐
+        ▼               ▼
     CNN Prediction     BLIP Captioning
     (classification)   (vision → language)
-            │               │
-            ▼               ▼
+        │               │
+        ▼               ▼
     Grad-CAM Heatmap   Natural Language Caption
-            │               │
-            └───────┬───────┘
-                    ▼
-            Insight Mapping Layer
-        (keywords + model outputs)
-                    │
-                    ▼
-        Final User-Facing Explanation
-                    │
-                    ▼
-            User Feedback Collection
-        (prediction + caption validation)
-                    │
-                    ▼
-        Dynamic Mapping & Feedback Log
+        │               │
+        └───────┬───────┘
+            ▼
+        Insight Mapping Layer
+    (keywords + model outputs)
+            │
+            ▼
+    Final User-Facing Explanation
+            │
+            ▼
+        User Feedback Collection
+    (prediction + caption validation)
+            │
+            ▼
+    Dynamic Mapping & Feedback Log
       (JSON + CSV, session-aware)
+            │
+            └───────────────↺ (influences future sessions)
+    ```
+    """
+)
                     │
                     └───────────↺ (influences future sessions)
     ```

@@ -147,6 +147,17 @@ This architecture emphasizes **system design, explainability, and feedback integ
 
 ---
 
+
+## Backend/Frontend Architecture
+
+This project is split into two main components:
+- **Frontend:** Streamlit app (see this README)
+- **Backend:** FastAPI service for heavy inference (see [api/README.md](api/README.md))
+
+For backend-specific setup, deployment, and API details, see [api/README.md](api/README.md).
+
+---
+
 ## Installation
 
 Clone the repository and navigate into it:  

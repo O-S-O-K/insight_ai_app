@@ -21,3 +21,15 @@ Local development
    streamlit run app/app.py
 
 This configuration will run the heavy models (TensorFlow) in the backend while the Streamlit frontend calls it for predictions, grad-cam and captions.
+
+---
+
+## Deployment (Docker/Render)
+
+For cloud deployment, this backend is designed to run on [Render](https://render.com/) or any Docker-compatible host. See the included `Dockerfile` and `DEPLOY_RENDER.md` for details.
+
+**Environment variables:**
+- `HF_TOKEN` (optional, for BLIP captions)
+- `INSIGHT_BACKEND_URL` (set by frontend to point to backend)
+
+For overall project context and frontend setup, see the [root README](../README.md).
