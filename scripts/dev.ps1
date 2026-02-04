@@ -4,7 +4,8 @@ param(
 )
 
 Write-Host "Starting backend (uvicorn) in background using conda environment '$EnvName' on port $BackendPort..."
-Start-Process -NoNewWindow -FilePath "conda" -ArgumentList "run -n $EnvName uvicorn api.main:app --reload --port $BackendPort" -WindowStyle Hidden
+# Start uvicorn via conda in a hidden window. -NoNewWindow cannot be combined with -WindowStyle, so omit it and use -PassThru to get the process handle.
+Start-Process -FilePath "conda" -ArgumentList "run -n $EnvName uvicorn api.main:app --reload --port $BackendPort" -WindowStyle Hidden -PassThru | Out-Null
 
 Start-Sleep -Seconds 2
 
