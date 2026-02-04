@@ -12,6 +12,13 @@ import streamlit as st
 import numpy as np
 import pandas as pd
 from PIL import Image, ImageOps
+import io
+import base64
+import requests
+
+# URL of the inference backend (set as an environment variable in deployment)
+# Streamlit Cloud provides secrets in TOML; prefer env var but fall back to Streamlit secrets when available
+BACKEND_URL = os.environ.get("INSIGHT_BACKEND_URL") or (st.secrets.get("INSIGHT_BACKEND_URL") if hasattr(st, "secrets") else None)
 
 try:
     import tensorflow as tf
@@ -154,6 +161,52 @@ def generate_blip_caption(processor, model, image):
         return f"Failed to generate BLIP caption: {e}"
 
 
+# Backend integration helpers (when INSIGHT_BACKEND_URL is set)
+
+def _post_file(endpoint: str, uploaded_file):
+    """Helper to POST an image file to the backend and return JSON."""
+    if not BACKEND_URL:
+        raise RuntimeError("No backend URL configured")
+    uploaded_file.seek(0)
+    files = {"file": (getattr(uploaded_file, "name", "upload.jpg"), uploaded_file.read())}
+    resp = requests.post(f"{BACKEND_URL.rstrip('/')}/{endpoint.lstrip('/')}", files=files, timeout=60)
+    resp.raise_for_status()
+    return resp.json()
+
+
+def call_backend_predict(uploaded_file):
+    return _post_file("predict", uploaded_file)
+
+
+def call_backend_caption(uploaded_file):
+    return _post_file("caption", uploaded_file)
+
+
+def call_backend_gradcam(uploaded_file, class_idx=None):
+    # include optional class_idx as form field
+    if not BACKEND_URL:
+        raise RuntimeError("No backend URL configured")
+    uploaded_file.seek(0)
+    files = {"file": (getattr(uploaded_file, "name", "upload.jpg"), uploaded_file.read())}
+    data = {}
+    if class_idx is not None:
+        data["class_idx"] = str(int(class_idx))
+    resp = requests.post(f"{BACKEND_URL.rstrip('/')}/gradcam", files=files, data=data, timeout=120)
+    resp.raise_for_status()
+    return resp.json()
+
+
+def post_feedback_to_backend(uploaded_file, entry: dict):
+    if not BACKEND_URL:
+        raise RuntimeError("No backend URL configured")
+    uploaded_file.seek(0)
+    files = {"file": (getattr(uploaded_file, "name", "upload.jpg"), uploaded_file.read())}
+    # send entry as form field
+    resp = requests.post(f"{BACKEND_URL.rstrip('/')}/feedback", files=files, data={"entry": json.dumps(entry)}, timeout=60)
+    resp.raise_for_status()
+    return resp.json()
+
+
 # ======================================================
 # LOAD MODELS & METADATA
 # ======================================================
@@ -211,32 +264,73 @@ if uploaded_file:
     # ======================================================
     # PREDICTIONS
     # ======================================================
-    img_resized = img.resize((224, 224))
-    x = np.array(img_resized).astype(np.float32)
-    x = np.expand_dims(x, 0)
-    x = preprocess_input(x)
+    predictions_available = TF_AVAILABLE or bool(BACKEND_URL)
 
-    preds = model.predict(x)
-    decoded = decode_predictions(preds, top=3)[0]
+    if not predictions_available:
+        st.warning("Predictions are not available: no TensorFlow locally and no backend configured. Model predictions and Grad-CAM are disabled.")
+        decoded = [("n/a", "n/a", 0.0)] * 3
+        preds = None
+    else:
+        if BACKEND_URL:
+            with st.spinner("Requesting predictions from backend..."):
+                try:
+                    resp = call_backend_predict(uploaded_file)
+                    decoded = [(None, p["label"], p["score"]) for p in resp.get("predictions", [])]
+                    preds = None
+                except Exception as e:
+                    st.error(f"Backend prediction failed: {e}")
+                    decoded = [("n/a", "n/a", 0.0)] * 3
+                    preds = None
+        else:
+            img_resized = img.resize((224, 224))
+            x = np.array(img_resized).astype(np.float32)
+            x = np.expand_dims(x, 0)
+            x = preprocess_input(x)
+
+            preds = model.predict(x)
+            decoded = decode_predictions(preds, top=3)[0]
 
     st.subheader("🔍 Top Predictions")
     for i, (_, label, score) in enumerate(decoded, 1):
-        st.write(f"{i}. **{label}** — {score * 100:.2f}%")
+        # Handle cases where the 'score' is not numeric
+        try:
+            pct = float(score) * 100
+            st.write(f"{i}. **{label}** — {pct:.2f}%")
+        except Exception:
+            st.write(f"{i}. **{label}** — {score}")
 
     # ======================================================
     # GRAD-CAM
     # ======================================================
     st.subheader("🔥 Grad-CAM Explanation")
-    last_conv = find_last_conv_layer(model)
-    heatmap = get_gradcam_heatmap(
-        model,
-        last_conv,
-        x,
-        class_idx=np.argmax(preds[0]),
-    )
-
     alpha = st.slider("Heatmap intensity", 0.2, 0.7, 0.4, 0.05)
-    cam_img = overlay_heatmap(heatmap, img, alpha)
+
+    if not predictions_available:
+        st.info("Grad-CAM is disabled because model predictions are not available.")
+        cam_img = img
+    else:
+        if BACKEND_URL:
+            with st.spinner("Computing Grad-CAM on backend..."):
+                try:
+                    resp = call_backend_gradcam(uploaded_file, class_idx=None)
+                    overlay_b64 = resp.get("overlay_base64")
+                    if overlay_b64:
+                        overlay_bytes = base64.b64decode(overlay_b64)
+                        cam_img = Image.open(io.BytesIO(overlay_bytes)).convert("RGB")
+                    else:
+                        cam_img = img
+                except Exception as e:
+                    st.error(f"Grad-CAM failed: {e}")
+                    cam_img = img
+        else:
+            last_conv = find_last_conv_layer(model)
+            heatmap = get_gradcam_heatmap(
+                model,
+                last_conv,
+                x,
+                class_idx=int(np.argmax(preds[0])),
+            )
+            cam_img = overlay_heatmap(heatmap, img, alpha)
 
     c1, c2 = st.columns(2)
     c1.image(img, caption="Original", width="content")
@@ -246,8 +340,18 @@ if uploaded_file:
     # BLIP CAPTION
     # ======================================================
     st.subheader("📝 BLIP Caption (Vision-Language)")
-    if st.session_state.blip_caption is None:
-        st.session_state.blip_caption = generate_blip_caption(blip_processor, blip_model, img)
+    if BACKEND_URL:
+        if st.session_state.blip_caption is None:
+            with st.spinner("Generating caption via backend..."):
+                try:
+                    resp = call_backend_caption(uploaded_file)
+                    st.session_state.blip_caption = resp.get("caption", "(no caption)")
+                except Exception as e:
+                    st.session_state.blip_caption = f"Caption failed: {e}"
+    else:
+        if st.session_state.blip_caption is None:
+            st.session_state.blip_caption = generate_blip_caption(blip_processor, blip_model, img)
+
     st.write(st.session_state.blip_caption)
 
     # ======================================================
@@ -270,25 +374,36 @@ if uploaded_file:
             if not user_label:
                 st.warning("Please provide a label.")
             else:
-                img_save_path = FEEDBACK_IMG_DIR / f"{img_hash}.jpg"
-                img.save(img_save_path)
-
                 entry = {
                     "image_hash": img_hash,
-                    "image_path": str(img_save_path),
                     "model_prediction": decoded[0][1],
                     "user_label": user_label,
                     "was_correct": correct,
                     "blip_caption": st.session_state.blip_caption,
                 }
 
-                df = pd.read_csv(FEEDBACK_CSV) if FEEDBACK_CSV.exists() else pd.DataFrame()
-                df = pd.concat([df, pd.DataFrame([entry])], ignore_index=True)
-                df.to_csv(FEEDBACK_CSV, index=False)
+                if BACKEND_URL:
+                    with st.spinner("Sending feedback to backend..."):
+                        try:
+                            resp = post_feedback_to_backend(uploaded_file, entry)
+                            st.session_state.feedback = entry
+                            st.session_state.feedback_submitted = True
+                            st.success("Feedback recorded on backend. Thank you!")
+                        except Exception as e:
+                            st.error(f"Failed to submit feedback: {e}")
+                else:
+                    img_save_path = FEEDBACK_IMG_DIR / f"{img_hash}.jpg"
+                    img.save(img_save_path)
 
-                st.session_state.feedback = entry
-                st.session_state.feedback_submitted = True
-                st.success("Feedback recorded. Thank you!")
+                    entry["image_path"] = str(img_save_path)
+
+                    df = pd.read_csv(FEEDBACK_CSV) if FEEDBACK_CSV.exists() else pd.DataFrame()
+                    df = pd.concat([df, pd.DataFrame([entry])], ignore_index=True)
+                    df.to_csv(FEEDBACK_CSV, index=False)
+
+                    st.session_state.feedback = entry
+                    st.session_state.feedback_submitted = True
+                    st.success("Feedback recorded. Thank you!")
 
     else:
         st.info("Feedback already submitted for this image.")

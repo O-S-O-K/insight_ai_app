@@ -218,12 +218,19 @@ Deployed using **Streamlit Cloud**:
 
 Mobile-compatible and runs entirely in the browser.
 
----
+### Streamlit Cloud configuration (frontend)
 
-## Author
+- To ensure Streamlit Cloud uses `requirements.txt` (pip) instead of a conda environment, disable the top-level `environment.yml` in the repo (you can rename it to `environment.yml.disabled`). This prevents conda parsing errors during deploy.
 
-Sheron Schley  
-Focus Areas: Data Science, Deep Learning, Explainable AI, Applied Machine Learning Systems
+- Set the backend URL in Streamlit Secrets (TOML) so the frontend can call the Render backend for heavy inference. Example `.streamlit/secrets.toml` content (DO NOT commit this file):
+
+```toml
+INSIGHT_BACKEND_URL = "https://your-render-service.onrender.com"
+```
+
+- For local development create `.streamlit/secrets.toml` with the same key, or set the `INSIGHT_BACKEND_URL` environment variable before running Streamlit.
+
+- If you use the Hugging Face Inference API for BLIP captions, add the token to Render as `HF_TOKEN` (set as a secret in the Render UI); do not store it in the repo.
 
 ---
 
