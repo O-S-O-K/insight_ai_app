@@ -18,7 +18,13 @@ import requests
 
 # URL of the inference backend (set as an environment variable in deployment)
 # Streamlit Cloud provides secrets in TOML; prefer env var but fall back to Streamlit secrets when available
-BACKEND_URL = os.environ.get("INSIGHT_BACKEND_URL") or (st.secrets.get("INSIGHT_BACKEND_URL") if hasattr(st, "secrets") else None)
+BACKEND_URL = os.environ.get("INSIGHT_BACKEND_URL")
+if not BACKEND_URL:
+    try:
+        # Accessing st.secrets when no secrets file exists can raise StreamlitSecretNotFoundError
+        BACKEND_URL = st.secrets["INSIGHT_BACKEND_URL"]
+    except Exception:
+        BACKEND_URL = None
 
 try:
     import tensorflow as tf
