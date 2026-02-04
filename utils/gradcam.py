@@ -1,7 +1,16 @@
 import numpy as np
-import tensorflow as tf
-from tensorflow.keras.models import Model
-from tensorflow.keras.applications.mobilenet_v2 import preprocess_input
+try:
+    import tensorflow as tf
+    from tensorflow.keras.models import Model
+    from tensorflow.keras.applications.mobilenet_v2 import preprocess_input
+    TF_AVAILABLE = True
+except ModuleNotFoundError:
+    tf = None
+    Model = None
+    # Fallback preprocess_input that leaves pixels untouched if TF not available
+    def preprocess_input(x):
+        return x
+    TF_AVAILABLE = False
 from PIL import Image
 import matplotlib.cm as cm
 
@@ -26,6 +35,8 @@ def predict_image(model, image, top=3, label_map=None):
 
 
 def find_last_conv_layer(model):
+    if not TF_AVAILABLE:
+        raise ModuleNotFoundError("TensorFlow is not available; Grad-CAM is disabled in this environment.")
     for layer in reversed(model.layers):
         if isinstance(layer, tf.keras.layers.Conv2D):
             return layer
@@ -34,8 +45,12 @@ def find_last_conv_layer(model):
 
 def get_gradcam_heatmap(model, last_conv_layer, img_tensor, class_idx=None):
     """
-    Generates a Grad-CAM heatmap for the specified class index.
+    Generates a Grad-CAM heatmap for the specified class index. Returns a small zero heatmap if TF is unavailable.
     """
+    if not TF_AVAILABLE:
+        # Return a tiny zero heatmap so overlay can handle it without crashing
+        return np.zeros((7, 7))
+
     grad_model = Model(
         [model.inputs],
         [last_conv_layer.output, model.output]
@@ -53,11 +68,21 @@ def get_gradcam_heatmap(model, last_conv_layer, img_tensor, class_idx=None):
 
     heatmap = conv_out @ pooled_grads[..., tf.newaxis]
     heatmap = tf.squeeze(heatmap)
-    heatmap = tf.maximum(heatmap, 0) / tf.reduce_max(heatmap)
+    heatmap = tf.maximum(heatmap, 0)
+    max_val = tf.reduce_max(heatmap)
+    if max_val == 0:
+        return np.zeros_like(heatmap.numpy())
+    heatmap = heatmap / max_val
     return heatmap.numpy()
 
 
 def overlay_heatmap(heatmap, image, alpha=0.4):
+    # If heatmap is None or all zeros, return the original image
+    if heatmap is None:
+        return image
+    if np.max(heatmap) == 0:
+        return image
+
     heatmap = np.uint8(255 * heatmap)
     heatmap = Image.fromarray(heatmap).resize(image.size)
 
