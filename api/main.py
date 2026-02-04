@@ -2,8 +2,15 @@ import os
 import io
 import json
 import base64
+import sys
 from typing import Optional
 from pathlib import Path
+
+# ----------------------------
+# Ensure container can find utils/ and other sibling modules
+ROOT = Path(__file__).resolve().parent  # `/app` inside container
+sys.path.insert(0, str(ROOT))
+# ----------------------------
 
 from fastapi import FastAPI, File, UploadFile, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -23,7 +30,8 @@ from tensorflow.keras.models import load_model
 from tensorflow.keras.applications import MobileNetV2
 from tensorflow.keras.applications.mobilenet_v2 import preprocess_input, decode_predictions
 
-ROOT = Path(__file__).resolve().parents[1]
+# ----------------------------
+# Paths for models and feedback
 MODELS_DIR = ROOT / "models"
 MODEL_METADATA_PATH = MODELS_DIR / "model_metadata.json"
 FINETUNED_MODEL_PATH = MODELS_DIR / "cnn_model_finetuned.h5"
@@ -31,6 +39,8 @@ FEEDBACK_CSV = ROOT / "feedback_log.csv"
 FEEDBACK_IMG_DIR = ROOT / "feedback_images"
 FEEDBACK_IMG_DIR.mkdir(exist_ok=True)
 
+# ----------------------------
+# FastAPI app setup
 app = FastAPI(title="InsightAI Backend")
 
 # Allow all origins for demo simplicity (restrict in production)
@@ -45,7 +55,8 @@ app.add_middleware(
 HF_TOKEN = os.environ.get("HF_TOKEN")  # optional, for BLIP via HF Inference API
 HF_BLIP_MODEL = "Salesforce/blip-image-captioning-base"
 
-# Load metadata
+# ----------------------------
+# Load model metadata
 def load_model_metadata():
     if MODEL_METADATA_PATH.exists():
         return json.loads(MODEL_METADATA_PATH.read_text())
@@ -71,16 +82,17 @@ def load_cnn_model():
 
 model, model_source = load_cnn_model()
 
+# ----------------------------
 # Helpers
 def read_imagefile(file) -> Image.Image:
     image = Image.open(io.BytesIO(file)).convert("RGB")
     return ImageOps.exif_transpose(image) if hasattr(ImageOps, 'exif_transpose') else image
 
-
+# ----------------------------
+# Routes
 @app.get("/health")
 def health():
     return {"status": "ok"}
-
 
 @app.post("/predict")
 async def predict(file: UploadFile = File(...)):
@@ -98,7 +110,6 @@ async def predict(file: UploadFile = File(...)):
         return {"predictions": predictions, "model_version": meta.get("version", "N/A")}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
 
 @app.post("/gradcam")
 async def gradcam(file: UploadFile = File(...), class_idx: Optional[int] = Form(None)):
@@ -121,7 +132,6 @@ async def gradcam(file: UploadFile = File(...), class_idx: Optional[int] = Form(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-
 @app.post("/caption")
 async def caption(file: UploadFile = File(...)):
     if not HF_TOKEN:
@@ -133,7 +143,6 @@ async def caption(file: UploadFile = File(...)):
         resp = requests.post(api_url, headers=headers, data=contents, timeout=60)
         resp.raise_for_status()
         data = resp.json()
-        # expected to be a list like [{"generated_text": "..."}]
         if isinstance(data, list) and len(data) and isinstance(data[0], dict):
             caption = data[0].get("generated_text") or data[0].get("caption")
         else:
@@ -141,7 +150,6 @@ async def caption(file: UploadFile = File(...)):
         return {"caption": caption}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
 
 @app.post("/feedback")
 async def feedback(entry: str = Form(...), file: Optional[UploadFile] = File(None)):
@@ -154,7 +162,6 @@ async def feedback(entry: str = Form(...), file: Optional[UploadFile] = File(Non
                 f.write(contents)
             ed["image_path"] = str(img_path)
 
-        # append to CSV (create if needed)
         import pandas as pd
         df = pd.read_csv(FEEDBACK_CSV) if FEEDBACK_CSV.exists() else pd.DataFrame()
         df = pd.concat([df, pd.DataFrame([ed])], ignore_index=True)
@@ -162,7 +169,6 @@ async def feedback(entry: str = Form(...), file: Optional[UploadFile] = File(Non
         return {"status": "ok"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
 
 @app.get("/metadata")
 def metadata():
