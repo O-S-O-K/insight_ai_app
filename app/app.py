@@ -31,7 +31,13 @@ except ModuleNotFoundError:
     TF_AVAILABLE = False
 
 # Optional BLIP
-from transformers import BlipProcessor, BlipForConditionalGeneration
+try:
+    from transformers import BlipProcessor, BlipForConditionalGeneration
+    BLIP_AVAILABLE = True
+except ModuleNotFoundError:
+    BlipProcessor = None
+    BlipForConditionalGeneration = None
+    BLIP_AVAILABLE = False
 
 # ======================================================
 # PATHS
@@ -110,6 +116,8 @@ def load_cnn_model():
 
 @st.cache_resource
 def load_blip_model():
+    if not BLIP_AVAILABLE:
+        return None, None
     processor = BlipProcessor.from_pretrained("Salesforce/blip-image-captioning-base")
     model = BlipForConditionalGeneration.from_pretrained("Salesforce/blip-image-captioning-base")
     return processor, model
@@ -135,10 +143,15 @@ def resize_for_mobile(img, max_pixels=1024):
 
 
 def generate_blip_caption(processor, model, image):
-    inputs = processor(images=image, return_tensors="pt")
-    out = model.generate(**inputs)
-    caption = processor.decode(out[0], skip_special_tokens=True)
-    return caption
+    if not BLIP_AVAILABLE or processor is None or model is None:
+        return "BLIP captioning not available in this deployment."
+    try:
+        inputs = processor(images=image, return_tensors="pt")
+        out = model.generate(**inputs)
+        caption = processor.decode(out[0], skip_special_tokens=True)
+        return caption
+    except Exception as e:
+        return f"Failed to generate BLIP caption: {e}"
 
 
 # ======================================================
