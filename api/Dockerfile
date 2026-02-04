@@ -12,12 +12,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Create a non-root user and a virtual environment in their home
 RUN useradd -m appuser \
     && python -m venv /home/appuser/venv \
-    && /home/appuser/venv/bin/pip install --upgrade pip
+    && chown -R appuser:appuser /home/appuser \
+    && su appuser -c "/home/appuser/venv/bin/pip install --upgrade pip"
 
 WORKDIR /app
 COPY requirements.txt ./
-# Install Python requirements into the venv (avoids running pip as root at runtime)
-RUN /home/appuser/venv/bin/pip install --no-cache-dir -r requirements.txt
+# Install Python requirements into the venv as appuser (avoids pip running as root)
+RUN chown -R appuser:appuser /home/appuser/venv \
+    && su appuser -c "/home/appuser/venv/bin/pip install --no-cache-dir -r requirements.txt"
 
 # Copy project files and set ownership to the non-root user
 COPY .. /app
