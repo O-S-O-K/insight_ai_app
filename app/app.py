@@ -13,10 +13,22 @@ import numpy as np
 import pandas as pd
 from PIL import Image, ImageOps
 
-import tensorflow as tf
-from tensorflow.keras.models import load_model
-from tensorflow.keras.applications import MobileNetV2
-from tensorflow.keras.applications.mobilenet_v2 import preprocess_input, decode_predictions
+try:
+    import tensorflow as tf
+    from tensorflow.keras.models import load_model
+    from tensorflow.keras.applications import MobileNetV2
+    from tensorflow.keras.applications.mobilenet_v2 import preprocess_input, decode_predictions
+    TF_AVAILABLE = True
+except ModuleNotFoundError:
+    # TensorFlow isn't installed in this environment (common on lightweight hosts or mobile builds)
+    tf = None
+    load_model = None
+    MobileNetV2 = None
+    # Minimal fallbacks so other code can run without TF
+    preprocess_input = lambda x: x
+    def decode_predictions(preds, top=3):
+        return [("n/a", "n/a", 0.0)] * top
+    TF_AVAILABLE = False
 
 # Optional BLIP
 from transformers import BlipProcessor, BlipForConditionalGeneration
@@ -132,8 +144,12 @@ def generate_blip_caption(processor, model, image):
 # ======================================================
 # LOAD MODELS & METADATA
 # ======================================================
-model, model_source = load_cnn_model()
 meta = load_model_metadata()
+if TF_AVAILABLE:
+    model, model_source = load_cnn_model()
+else:
+    model, model_source = None, "TensorFlow not available"
+
 blip_processor, blip_model = load_blip_model()
 
 # ======================================================
@@ -152,6 +168,13 @@ with st.expander("ℹ️ Model Information", expanded=False):
 **Training data:** {meta['trained_on']}  
 **Last updated:** {meta['last_updated']}
 """
+    )
+
+# If TensorFlow isn't available, show a clear warning and disable prediction UI
+if not TF_AVAILABLE:
+    st.warning(
+        "TensorFlow is not installed in this environment — model predictions are disabled. "
+        "If this is unexpected, ensure `tensorflow` is in `requirements.txt` and your deployment installed it successfully."
     )
 
 # ======================================================
