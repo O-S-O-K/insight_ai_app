@@ -16,7 +16,7 @@ st.markdown(
     - 💡 A **human-friendly insight layer** that maps captions and predictions to interpretable concepts
 
     In addition to explainability, the application incorporates a **human-in-the-loop feedback mechanism** that
-    allows users to validate and correct both predictions and captions. This feedback is persisted and used to
+    allows users to validate and correct predictions. This feedback is persisted and used to
     influence future inference behavior without modifying model weights.
     """
 )
