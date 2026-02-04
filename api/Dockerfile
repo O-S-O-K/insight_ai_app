@@ -29,8 +29,5 @@ RUN chown -R appuser:appuser /app /home/appuser
 ENV PATH="/home/appuser/venv/bin:${PATH}"
 USER appuser
 
-# Set working directory to the API package so `main.py` is importable as `main`
-WORKDIR /app/api
-
 EXPOSE 8000
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000"]
