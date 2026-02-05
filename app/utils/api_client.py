@@ -4,30 +4,53 @@ import requests
 FASTAPI_URL = os.environ.get("FASTAPI_URL", "http://localhost:8000")
 
 
-def _post_image(endpoint: str, uploaded_file):
-    uploaded_file.seek(0)
-    files = {"file": uploaded_file}
-    r = requests.post(f"{FASTAPI_URL}{endpoint}", files=files, timeout=60)
+def predict_image(file_obj):
+    files = {"file": file_obj}
+    r = requests.post(
+        f"{FASTAPI_URL}/predict",
+        files=files,
+        timeout=30,
+    )
     r.raise_for_status()
     return r.json()
 
 
-def predict(uploaded_file):
-    return _post_image("/predict", uploaded_file)
+def gradcam_image(file_obj, class_idx=None):
+    files = {"file": file_obj}
+    data = {}
+    if class_idx is not None:
+        data["class_idx"] = str(class_idx)
+
+    r = requests.post(
+        f"{FASTAPI_URL}/gradcam",
+        files=files,
+        data=data,
+        timeout=60,
+    )
+    r.raise_for_status()
+    return r.json()
 
 
-def caption(uploaded_file):
-    return _post_image("/caption", uploaded_file)
+def caption_image(file_obj):
+    files = {"file": file_obj}
+    r = requests.post(
+        f"{FASTAPI_URL}/caption",
+        files=files,
+        timeout=30,
+    )
+    r.raise_for_status()
+    return r.json()
 
 
-def gradcam(uploaded_file):
-    return _post_image("/gradcam", uploaded_file)
+def submit_feedback(file_obj, entry: dict):
+    files = {"file": file_obj}
+    data = {"entry": entry}
 
-
-def submit_feedback(uploaded_file, payload: dict):
-    uploaded_file.seek(0)
-    files = {"file": uploaded_file}
-    data = {"metadata": json.dumps(payload)}
-    r = requests.post(f\"{FASTAPI_URL}/feedback\", files=files, data=data, timeout=30)
+    r = requests.post(
+        f"{FASTAPI_URL}/feedback",
+        files=files,
+        data=data,
+        timeout=30,
+    )
     r.raise_for_status()
     return r.json()
