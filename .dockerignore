@@ -1,0 +1,12 @@
+.git
+.vscode
+.devcontainer
+__pycache__/
+*.pyc
+
+_archive_research/
+_archive_runtime/
+_archive_tools/
+
+.env
+.env.*

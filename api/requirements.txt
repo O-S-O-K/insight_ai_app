@@ -1,8 +1,22 @@
-fastapi
-uvicorn[standard]
-python-multipart
-requests
-matplotlib
-pillow
-numpy
+# ============================
+# API framework
+# ============================
+fastapi>=0.115,<1
+uvicorn[standard]>=0.30,<1
+python-multipart>=0.0.9,<1
+requests>=2.32,<3
+
+# ============================
+# Image & numerical processing
+# ============================
+numpy>=2.2,<3
+pillow>=10.3,<11
+matplotlib>=3.9,<4
+opencv-python-headless>=4.10,<5
+
+# ============================
+# Deep learning
+# ============================
 tensorflow==2.20.0
+keras==3.12.0
+h5py>=3.10,<4
