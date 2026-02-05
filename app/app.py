@@ -1,10 +1,3 @@
-USE_MOCK = os.environ.get("USE_MOCK_API", "false").lower() == "true"
-
-if USE_MOCK:
-    from utils.mock_api_client import *
-else:
-    from utils.api_client import *
-
 # app/app.py
 import os
 import json
@@ -14,6 +7,13 @@ from pathlib import Path
 import streamlit as st
 import numpy as np
 from PIL import Image
+
+USE_MOCK = os.environ.get("USE_MOCK_API", "false").lower() == "true"
+
+if USE_MOCK:
+    from utils.mock_api_client import *
+else:
+    from utils.api_client import *
 
 from utils.api_client import (
     predict as call_backend_predict,
