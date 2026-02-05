@@ -27,8 +27,10 @@ RUN /home/appuser/venv/bin/pip install --upgrade pip \
 
 # Copy API code
 COPY api/ ./api
-# Copy main.py from root
-COPY main.py . 
+# Copy utils folder so imports work
+COPY utils/ ./utils
+# Copy main.py from archived root_files
+COPY _archive_runtime/root_files/main.py . 
 # Copy models folder
 COPY models/ ./models
 
