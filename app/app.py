@@ -8,7 +8,7 @@ import streamlit as st
 import numpy as np
 from PIL import Image
 
-USE_MOCK = os.environ.get("USE_MOCK_API", "false").lower() == "true"
+USE_MOCK = os.environ.get("USE_MOCK_API", "false").lower() == "false"
 
 if USE_MOCK:
     from utils.mock_api_client import *
