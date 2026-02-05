@@ -8,7 +8,10 @@ import streamlit as st
 import numpy as np
 from PIL import Image
 
-USE_MOCK = os.environ.get("USE_MOCK_API", "false").lower() == "false"
+# point to local backend for development
+os.environ["INSIGHT_BACKEND_URL"] = "http://localhost:8000"
+# Toggle between mock and real API client
+USE_MOCK = os.environ.get("USE_MOCK_API", "false").lower() == "true"
 
 if USE_MOCK:
     from utils.mock_api_client import *
