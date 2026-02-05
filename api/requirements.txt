@@ -2,6 +2,7 @@ fastapi
 uvicorn[standard]
 python-multipart
 requests
+matplotlib
 pillow
 numpy
 tensorflow==2.20.0
