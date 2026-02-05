@@ -33,7 +33,7 @@ from tensorflow.keras.applications.mobilenet_v2 import preprocess_input
 # Paths
 # -------------------------------------------------
 MODELS_DIR = ROOT / "models"
-MODEL_PATH = MODELS_DIR / "models/cnn_model.h5"
+MODEL_PATH = MODELS_DIR / "cnn_model.h5"
 
 # -------------------------------------------------
 # App init
