@@ -6,6 +6,8 @@ from PIL import Image
 import numpy as np
 import io
 import base64
+import traceback
+import tensorflow as tf
 
 # Add repo root to sys.path
 ROOT = Path(__file__).resolve().parents[1]
@@ -40,22 +42,25 @@ def health():
 @app.post("/predict")
 async def predict(file: UploadFile = File(...)):
     try:
-        image_bytes = await file.read()
-        image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-        image = image.resize((224, 224))
+        from PIL import Image
+        import numpy as np
+        from tensorflow.keras.applications.mobilenet_v2 import preprocess_input
 
-        x = np.array(image)
-        x = preprocess_input(x)
-        x = np.expand_dims(x, axis=0)
+        # Load and preprocess image
+        image = Image.open(file.file).convert("RGB")
+        img_array = preprocess_input(np.expand_dims(image.resize((224,224)), axis=0))
 
-        preds = model.predict(x)
-        decoded = decode_predictions(preds, top=3)[0]
+        # Predict
+        preds = model.predict(img_array)
+        pred_class = int(np.argmax(preds[0]))
 
-        results = [{"label": label, "score": float(score)} for (_, label, score) in decoded]
+        return {"class": pred_class}
 
-        return JSONResponse(content={"predictions": results})
     except Exception as e:
-        return JSONResponse(status_code=500, content={"error": str(e)})
+        import traceback
+        traceback_str = traceback.format_exc()
+        # Return the error info instead of 500
+        return {"error": str(e), "trace": traceback_str}
 
 # ----------------------------
 # Caption endpoint (dummy BLIP / placeholder)
@@ -71,29 +76,61 @@ async def caption(file: UploadFile = File(...)):
 # ----------------------------
 # Grad-CAM endpoint
 # ----------------------------
+from fastapi import FastAPI, UploadFile, File
+from tensorflow.keras.models import Model
+from tensorflow.keras.preprocessing import image as keras_image
+from tensorflow.keras.applications.mobilenet_v2 import preprocess_input
+import numpy as np
+from PIL import Image
+import tensorflow as tf
+import traceback
+
+app = FastAPI()
+
+# Assume 'model' is already loaded somewhere globally:
+# model = load_model("models/cnn_model.h5")
+
 @app.post("/gradcam")
-async def gradcam(file: UploadFile = File(...), class_idx: int = None):
+async def gradcam(file: UploadFile = File(...)):
     try:
-        image_bytes = await file.read()
-        image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-        image_resized = image.resize((224, 224))
-
-        x = np.array(image_resized)
+        # Load image
+        img = Image.open(file.file).convert("RGB")
+        img_resized = img.resize((224, 224))
+        x = np.expand_dims(np.array(img_resized), axis=0)
         x = preprocess_input(x)
-        x = np.expand_dims(x, axis=0)
 
-        if class_idx is None:
-            class_idx = int(np.argmax(model.predict(x)[0]))
+        # Automatically pick the last conv layer
+        last_conv_layer_name = None
+        for layer in reversed(model.layers):
+            if isinstance(layer, tf.keras.layers.Conv2D):
+                last_conv_layer_name = layer.name
+                break
 
-        heatmap = get_gradcam_heatmap(model, x, last_conv_layer_name, class_idx)
-        overlay = overlay_heatmap(heatmap, image, alpha=0.4)
+        if last_conv_layer_name is None:
+            raise ValueError("No Conv2D layer found in the model for Grad-CAM.")
 
-        # Return overlay as base64 string
-        buffered = io.BytesIO()
-        overlay.save(buffered, format="PNG")
-        overlay_b64 = base64.b64encode(buffered.getvalue()).decode("utf-8")
+        last_conv_layer = model.get_layer(last_conv_layer_name)
+        grad_model = Model(
+            [model.inputs], [last_conv_layer.output, model.output]
+        )
 
-        return JSONResponse(content={"overlay_base64": overlay_b64})
+        with tf.GradientTape() as tape:
+            conv_outputs, predictions = grad_model(x)
+            pred_index = tf.argmax(predictions[0])
+            loss = predictions[:, pred_index]
+
+        grads = tape.gradient(loss, conv_outputs)
+        pooled_grads = tf.reduce_mean(grads, axis=(0, 1, 2))
+        conv_outputs = conv_outputs[0]
+        heatmap = conv_outputs @ pooled_grads[..., tf.newaxis]
+        heatmap = tf.squeeze(heatmap)
+        heatmap = tf.maximum(heatmap, 0) / tf.math.reduce_max(heatmap)
+        heatmap = np.uint8(255 * heatmap.numpy())
+
+        return {"gradcam_layer": last_conv_layer_name, "heatmap_shape": heatmap.shape}
+
     except Exception as e:
-        return JSONResponse(status_code=500, content={"error": str(e)})
-~
+        # Return detailed error info instead of 500
+        traceback_str = traceback.format_exc()
+        return {"error": str(e), "trace": traceback_str}
+
