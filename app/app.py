@@ -20,13 +20,6 @@ else:
         submit_feedback as post_feedback_to_backend,
     )
 
-from utils.api_client import (
-    predict as call_backend_predict,
-    caption as call_backend_caption,
-    gradcam as call_backend_gradcam,
-    submit_feedback as post_feedback_to_backend,
-)
-
 # -----------------------------------------------------------------------------
 # App configuration
 # -----------------------------------------------------------------------------
