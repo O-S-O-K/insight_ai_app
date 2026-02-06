@@ -11,7 +11,7 @@ from PIL import Image
 # point to local backend for development
 os.environ["INSIGHT_BACKEND_URL"] = "http://localhost:8000"
 # Toggle between mock and real API client
-USE_MOCK = os.environ.get("USE_MOCK_API", "true").lower() == "true"
+USE_MOCK = os.environ.get("USE_MOCK_API", "false").lower() == "true"
 
 if USE_MOCK:
     from utils.mock_api_client import *
@@ -22,6 +22,7 @@ else:
         gradcam_image as call_backend_gradcam,
         submit_feedback as post_feedback_to_backend,
     )
+st.write(f"Using {'mock' if USE_MOCK else 'live'} API client")
 
 # -----------------------------------------------------------------------------
 # App configuration
@@ -136,7 +137,7 @@ if uploaded_file:
                 "rating": rating,
             }
             try:
-                post_feedback_to_backend(uploaded_file, entry)
+                post_feedback_to_backend(uploaded_file, json.dumps(entry))
                 st.session_state.feedback_submitted = True
                 st.success("Feedback submitted — thank you!")
             except Exception as e:

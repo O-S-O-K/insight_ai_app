@@ -178,8 +178,10 @@ async def feedback(file: UploadFile = File(...), entry: str = Form(...)):
         with open(img_path, "wb") as f:
             f.write(await file.read())
 
-        # Save feedback entry as JSON
-        entry_data = json.loads(entry) if isinstance(entry, str) else entry
+        # Parse entry JSON string
+        entry_data = json.loads(entry)
+
+        # Load or create feedback log
         feedback_log_path = FEEDBACK_DIR / "feedback_log.json"
         if feedback_log_path.exists():
             with open(feedback_log_path, "r") as f:
@@ -193,6 +195,7 @@ async def feedback(file: UploadFile = File(...), entry: str = Form(...)):
             "rating": entry_data.get("rating"),
         })
 
+        # Save feedback log
         with open(feedback_log_path, "w") as f:
             json.dump(log, f, indent=2)
 

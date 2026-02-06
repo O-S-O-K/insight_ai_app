@@ -1,4 +1,3 @@
-# utils/api_client.py
 import os
 import requests
 
@@ -29,7 +28,7 @@ def caption_image(file_obj):
     r.raise_for_status()
     return r.json()
 
-def submit_feedback(file_obj, entry: dict):
+def submit_feedback(file_obj, entry: str):
     files = {"file": _file_tuple(file_obj)}
     data = {"entry": entry}
     r = requests.post(f"{BASE_URL}/feedback", files=files, data=data, timeout=30)
