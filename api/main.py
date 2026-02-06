@@ -1,29 +1,50 @@
 import sys
 from pathlib import Path
+import io
+import base64
+import traceback
+
+import numpy as np
+from PIL import Image
+import tensorflow as tf
 from fastapi import FastAPI, UploadFile, File
 from fastapi.responses import JSONResponse
-from PIL import Image
-import numpy as np
-import traceback
-import tensorflow as tf
 from tensorflow.keras.models import load_model, Model
+from tensorflow.keras.layers import Conv2D
 from tensorflow.keras.applications.mobilenet_v2 import preprocess_input
+import matplotlib.cm as cm
 
-# Add repo root to sys.path
+# ----------------------------
+# Path setup
+# ----------------------------
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from utils.gradcam import find_last_conv_layer  # assumes you have this function
-
-# Paths
+# ----------------------------
+# Config
+# ----------------------------
 MODELS_DIR = ROOT / "models"
 MODEL_PATH = MODELS_DIR / "cnn_model.h5"
+IMG_SIZE = (224, 224)
 
-# FastAPI app
+# ----------------------------
+# App
+# ----------------------------
 app = FastAPI(title="Insight AI API")
 
+# ----------------------------
+# Utilities
+# ----------------------------
+def find_last_conv_layer(model):
+    for layer in reversed(model.layers):
+        if isinstance(layer, Conv2D):
+            return layer.name
+    raise ValueError("No Conv2D layer found in model.")
+
+# ----------------------------
 # Load model once
+# ----------------------------
 model = load_model(MODEL_PATH)
 last_conv_layer_name = find_last_conv_layer(model)
 
@@ -32,87 +53,100 @@ last_conv_layer_name = find_last_conv_layer(model)
 # ----------------------------
 @app.get("/")
 def health():
-    return {"status": "ok"}
+    return {
+        "status": "ok",
+        "model_loaded": True,
+        "gradcam_layer": last_conv_layer_name,
+    }
 
 # ----------------------------
-# Prediction endpoint
+# Prediction
 # ----------------------------
 @app.post("/predict")
 async def predict(file: UploadFile = File(...)):
     try:
-        # Load and preprocess image
-        image = Image.open(file.file).convert("RGB")
-        img_array = np.expand_dims(np.array(image.resize((224, 224))), axis=0)
-        img_array = preprocess_input(img_array)
+        img = Image.open(file.file).convert("RGB").resize(IMG_SIZE)
+        x = np.expand_dims(np.array(img), axis=0)
+        x = preprocess_input(x)
 
-        # Predict
-        preds = model.predict(img_array)
-        pred_class = int(np.argmax(preds[0]))
+        preds = model.predict(x)
+        class_idx = int(np.argmax(preds[0]))
+        confidence = float(np.max(preds[0]))
 
-        return {"class": pred_class}
+        return {
+            "class": class_idx,
+            "confidence": confidence,
+        }
 
     except Exception as e:
-        traceback_str = traceback.format_exc()
-        return {"error": str(e), "trace": traceback_str}
+        return JSONResponse(
+            status_code=500,
+            content={"error": str(e), "trace": traceback.format_exc()},
+        )
 
 # ----------------------------
-# Caption endpoint (placeholder)
+# Caption (mock for now)
 # ----------------------------
 @app.post("/caption")
 async def caption(file: UploadFile = File(...)):
-    try:
-        # Placeholder caption
-        return JSONResponse(content={"caption": "This is a mock caption for testing."})
-    except Exception as e:
-        return JSONResponse(status_code=500, content={"error": str(e)})
+    return {"caption": "This is a mock caption for testing."}
 
 # ----------------------------
-# Grad-CAM endpoint
+# Grad-CAM
 # ----------------------------
 @app.post("/gradcam")
 async def gradcam(file: UploadFile = File(...)):
     try:
         # Load image
         img = Image.open(file.file).convert("RGB")
-        img_resized = img.resize((224, 224))
+        img_resized = img.resize(IMG_SIZE)
+
         x = np.expand_dims(np.array(img_resized), axis=0)
         x = preprocess_input(x)
 
-        # Pick the last Conv2D layer by name
-        last_conv_layer_name = None
-        for layer in reversed(model.layers):
-            if isinstance(layer, tf.keras.layers.Conv2D):
-                last_conv_layer_name = layer.name  # ✅ use .name
-                break
-
-        if last_conv_layer_name is None:
-            raise ValueError("No Conv2D layer found in the model for Grad-CAM.")
-
+        # Grad-CAM model
         last_conv_layer = model.get_layer(last_conv_layer_name)
-        grad_model = Model([model.inputs], [last_conv_layer.output, model.output])
+        grad_model = Model(
+            inputs=model.inputs,
+            outputs=[last_conv_layer.output, model.output],
+        )
 
+        # Compute gradients
         with tf.GradientTape() as tape:
             conv_outputs, predictions = grad_model(x)
-            pred_index = tf.argmax(predictions[0])
-            loss = predictions[:, pred_index]
+            class_idx = tf.argmax(predictions[0])
+            loss = predictions[:, class_idx]
 
         grads = tape.gradient(loss, conv_outputs)
         pooled_grads = tf.reduce_mean(grads, axis=(0, 1, 2))
+
         conv_outputs = conv_outputs[0]
         heatmap = conv_outputs @ pooled_grads[..., tf.newaxis]
         heatmap = tf.squeeze(heatmap)
-        heatmap = tf.maximum(heatmap, 0) / tf.math.reduce_max(heatmap)
-        heatmap = np.uint8(255 * heatmap.numpy())
 
-        # Encode heatmap as base64
-        import io, base64
-        heatmap_img = Image.fromarray(heatmap).resize(img_resized.size)
+        heatmap = tf.maximum(heatmap, 0) / tf.reduce_max(heatmap)
+        heatmap = heatmap.numpy()
+
+        # Apply colormap
+        heatmap_colored = cm.jet(heatmap)[:, :, :3]
+        heatmap_colored = np.uint8(255 * heatmap_colored)
+
+        # Overlay on original image
+        heatmap_img = Image.fromarray(heatmap_colored).resize(IMG_SIZE)
+        overlay = Image.blend(img_resized, heatmap_img, alpha=0.4)
+
+        # Encode as base64
         buffer = io.BytesIO()
-        heatmap_img.save(buffer, format="PNG")
-        heatmap_b64 = base64.b64encode(buffer.getvalue()).decode("utf-8")
+        overlay.save(buffer, format="PNG")
+        overlay_b64 = base64.b64encode(buffer.getvalue()).decode("utf-8")
 
-        return {"gradcam_layer": last_conv_layer_name, "heatmap_base64": heatmap_b64}
+        return {
+            "gradcam_layer": last_conv_layer_name,
+            "heatmap_base64":f"data:image/png;base64,{overlay_b64}",
+        }
 
     except Exception as e:
-        traceback_str = traceback.format_exc()
-        return {"error": str(e), "trace": traceback_str}
+        return JSONResponse(
+            status_code=500,
+            content={"error": str(e), "trace": traceback.format_exc()},
+        )
