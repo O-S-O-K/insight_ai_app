@@ -21,7 +21,7 @@ from fastapi.responses import JSONResponse
 # ----------------------------
 # Path setup
 # ----------------------------
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parents[1]
 MODELS_DIR = ROOT / "models"
 FEEDBACK_DIR = ROOT / "feedback_images"
 FEEDBACK_DIR.mkdir(exist_ok=True)
