@@ -78,7 +78,16 @@ async def gradcam(file: UploadFile = File(...)):
         x = np.expand_dims(np.array(img_resized), axis=0)
         x = preprocess_input(x)
 
-        # Grad-CAM
+        # Pick the last Conv2D layer by name
+        last_conv_layer_name = None
+        for layer in reversed(model.layers):
+            if isinstance(layer, tf.keras.layers.Conv2D):
+                last_conv_layer_name = layer.name  # ✅ use .name
+                break
+
+        if last_conv_layer_name is None:
+            raise ValueError("No Conv2D layer found in the model for Grad-CAM.")
+
         last_conv_layer = model.get_layer(last_conv_layer_name)
         grad_model = Model([model.inputs], [last_conv_layer.output, model.output])
 
@@ -95,7 +104,7 @@ async def gradcam(file: UploadFile = File(...)):
         heatmap = tf.maximum(heatmap, 0) / tf.math.reduce_max(heatmap)
         heatmap = np.uint8(255 * heatmap.numpy())
 
-        # Encode heatmap as base64 so frontend can display
+        # Encode heatmap as base64
         import io, base64
         heatmap_img = Image.fromarray(heatmap).resize(img_resized.size)
         buffer = io.BytesIO()
