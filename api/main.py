@@ -1,3 +1,4 @@
+# api/main.py
 import sys
 from pathlib import Path
 import io
@@ -7,6 +8,8 @@ import json
 
 import numpy as np
 from PIL import Image
+import torch
+from transformers import BlipProcessor, BlipForConditionalGeneration
 import tensorflow as tf
 from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.responses import JSONResponse
@@ -27,6 +30,7 @@ if str(ROOT) not in sys.path:
 # ----------------------------
 MODELS_DIR = ROOT / "models"
 MODEL_PATH = MODELS_DIR / "cnn_model.h5"
+METADATA_PATH = MODELS_DIR / "model_metadata.json"
 IMG_SIZE = (224, 224)
 
 # Directory for feedback
@@ -34,24 +38,34 @@ FEEDBACK_DIR = ROOT / "feedback_images"
 FEEDBACK_DIR.mkdir(exist_ok=True)
 
 # ----------------------------
-# App
+# Load model and metadata
 # ----------------------------
-app = FastAPI(title="Insight AI API")
+model = load_model(MODEL_PATH)
 
-# ----------------------------
-# Utilities
-# ----------------------------
+with open(METADATA_PATH, "r") as f:
+    metadata = json.load(f)
+
+LABEL_MAP = metadata.get("classes", {})
+
 def find_last_conv_layer(model):
     for layer in reversed(model.layers):
         if isinstance(layer, Conv2D):
             return layer.name
     raise ValueError("No Conv2D layer found in model.")
 
-# ----------------------------
-# Load model once
-# ----------------------------
-model = load_model(MODEL_PATH)
 last_conv_layer_name = find_last_conv_layer(model)
+
+# ----------------------------
+# BLIP setup
+# ----------------------------
+device = "cuda" if torch.cuda.is_available() else "cpu"
+blip_processor = BlipProcessor.from_pretrained("Salesforce/blip-image-captioning-base")
+blip_model = BlipForConditionalGeneration.from_pretrained("Salesforce/blip-image-captioning-base").to(device)
+
+# ----------------------------
+# App
+# ----------------------------
+app = FastAPI(title="Insight AI API")
 
 # ----------------------------
 # Health check
@@ -62,6 +76,7 @@ def health():
         "status": "ok",
         "model_loaded": True,
         "gradcam_layer": last_conv_layer_name,
+        "num_classes": len(LABEL_MAP),
     }
 
 # ----------------------------
@@ -76,10 +91,12 @@ async def predict(file: UploadFile = File(...)):
 
         preds = model.predict(x)
         class_idx = int(np.argmax(preds[0]))
+        class_name = LABEL_MAP.get(str(class_idx), f"Class {class_idx}")
         confidence = float(np.max(preds[0]))
 
         return {
-            "class": class_idx,
+            "class_idx": class_idx,
+            "class_name": class_name,
             "confidence": confidence,
         }
 
@@ -90,19 +107,17 @@ async def predict(file: UploadFile = File(...)):
         )
 
 # ----------------------------
-# Caption (real model if available)
+# Caption using BLIP
 # ----------------------------
 @app.post("/caption")
 async def caption(file: UploadFile = File(...)):
-    """
-    Generate a caption for the image. For now, we can keep it mock, 
-    but in the future, replace with BLIP model call.
-    """
     try:
-        # Example: load image (optional for future BLIP)
         img = Image.open(file.file).convert("RGB")
-        # For now, mock caption:
-        return {"caption": "This is a mock caption for testing."}
+        inputs = blip_processor(images=img, return_tensors="pt").to(device)
+        output_ids = blip_model.generate(**inputs)
+        caption_text = blip_processor.decode(output_ids[0], skip_special_tokens=True)
+
+        return {"caption": caption_text}
 
     except Exception as e:
         return JSONResponse(
@@ -114,9 +129,8 @@ async def caption(file: UploadFile = File(...)):
 # Grad-CAM
 # ----------------------------
 @app.post("/gradcam")
-async def gradcam(file: UploadFile = File(...)):
+async def gradcam(file: UploadFile = File(...), class_idx: int = None):
     try:
-        # Load image
         img = Image.open(file.file).convert("RGB")
         img_resized = img.resize(IMG_SIZE)
         x = np.expand_dims(np.array(img_resized), axis=0)
@@ -126,10 +140,15 @@ async def gradcam(file: UploadFile = File(...)):
         last_conv_layer = model.get_layer(last_conv_layer_name)
         grad_model = Model(inputs=model.inputs, outputs=[last_conv_layer.output, model.output])
 
+        # Determine target class
+        preds = model.predict(x)
+        if class_idx is None:
+            class_idx = int(np.argmax(preds[0]))
+        class_name = LABEL_MAP.get(str(class_idx), f"Class {class_idx}")
+
         # Compute gradients
         with tf.GradientTape() as tape:
             conv_outputs, predictions = grad_model(x)
-            class_idx = tf.argmax(predictions[0])
             loss = predictions[:, class_idx]
 
         grads = tape.gradient(loss, conv_outputs)
@@ -155,6 +174,8 @@ async def gradcam(file: UploadFile = File(...)):
 
         return {
             "gradcam_layer": last_conv_layer_name,
+            "class_idx": class_idx,
+            "class_name": class_name,
             "heatmap_base64": f"data:image/png;base64,{overlay_b64}",
         }
 
@@ -165,23 +186,18 @@ async def gradcam(file: UploadFile = File(...)):
         )
 
 # ----------------------------
-# Human feedback
+# Feedback
 # ----------------------------
 @app.post("/feedback")
 async def feedback(file: UploadFile = File(...), entry: str = Form(...)):
-    """
-    Save human feedback for an image.
-    """
     try:
         # Save uploaded image
         img_path = FEEDBACK_DIR / file.filename
         with open(img_path, "wb") as f:
             f.write(await file.read())
 
-        # Parse entry JSON string
-        entry_data = json.loads(entry)
-
-        # Load or create feedback log
+        # Save feedback
+        entry_data = json.loads(entry) if isinstance(entry, str) else entry
         feedback_log_path = FEEDBACK_DIR / "feedback_log.json"
         if feedback_log_path.exists():
             with open(feedback_log_path, "r") as f:
@@ -195,7 +211,6 @@ async def feedback(file: UploadFile = File(...), entry: str = Form(...)):
             "rating": entry_data.get("rating"),
         })
 
-        # Save feedback log
         with open(feedback_log_path, "w") as f:
             json.dump(log, f, indent=2)
 
