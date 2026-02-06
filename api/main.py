@@ -1,51 +1,50 @@
-# api/main.py
+# main.py
+import os
 import sys
 from pathlib import Path
 import io
 import base64
-import traceback
 import json
+import traceback
 
 import numpy as np
 from PIL import Image
-import torch
-from transformers import BlipProcessor, BlipForConditionalGeneration
 import tensorflow as tf
-from fastapi import FastAPI, UploadFile, File, Form
-from fastapi.responses import JSONResponse
 from tensorflow.keras.models import load_model, Model
 from tensorflow.keras.layers import Conv2D
 from tensorflow.keras.applications.mobilenet_v2 import preprocess_input
 import matplotlib.cm as cm
 
+from fastapi import FastAPI, UploadFile, File, Form
+from fastapi.responses import JSONResponse
+
 # ----------------------------
 # Path setup
 # ----------------------------
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-
-# ----------------------------
-# Config
-# ----------------------------
+ROOT = Path(__file__).resolve().parent
 MODELS_DIR = ROOT / "models"
-MODEL_PATH = MODELS_DIR / "cnn_model.h5"
-METADATA_PATH = MODELS_DIR / "model_metadata.json"
-IMG_SIZE = (224, 224)
-
-# Directory for feedback
 FEEDBACK_DIR = ROOT / "feedback_images"
 FEEDBACK_DIR.mkdir(exist_ok=True)
 
+MODEL_PATH = MODELS_DIR / "cnn_model.h5"
+METADATA_PATH = MODELS_DIR / "model_metadata.json"
+
+IMG_SIZE = (224, 224)
+
 # ----------------------------
-# Load model and metadata
+# Load model metadata
+# ----------------------------
+if METADATA_PATH.exists():
+    with open(METADATA_PATH, "r") as f:
+        metadata = json.load(f)
+    LABEL_MAP = metadata.get("classes", {})
+else:
+    LABEL_MAP = {}
+
+# ----------------------------
+# Load CNN model
 # ----------------------------
 model = load_model(MODEL_PATH)
-
-with open(METADATA_PATH, "r") as f:
-    metadata = json.load(f)
-
-LABEL_MAP = metadata.get("classes", {})
 
 def find_last_conv_layer(model):
     for layer in reversed(model.layers):
@@ -56,14 +55,19 @@ def find_last_conv_layer(model):
 last_conv_layer_name = find_last_conv_layer(model)
 
 # ----------------------------
-# BLIP setup
+# Load BLIP model for captioning
 # ----------------------------
-device = "cuda" if torch.cuda.is_available() else "cpu"
+from transformers import BlipProcessor, BlipForConditionalGeneration
+import torch
+
 blip_processor = BlipProcessor.from_pretrained("Salesforce/blip-image-captioning-base")
-blip_model = BlipForConditionalGeneration.from_pretrained("Salesforce/blip-image-captioning-base").to(device)
+blip_model = BlipForConditionalGeneration.from_pretrained("Salesforce/blip-image-captioning-base")
+blip_model.eval()
+device = "cuda" if torch.cuda.is_available() else "cpu"
+blip_model.to(device)
 
 # ----------------------------
-# App
+# FastAPI app
 # ----------------------------
 app = FastAPI(title="Insight AI API")
 
@@ -76,11 +80,10 @@ def health():
         "status": "ok",
         "model_loaded": True,
         "gradcam_layer": last_conv_layer_name,
-        "num_classes": len(LABEL_MAP),
     }
 
 # ----------------------------
-# Prediction
+# Prediction endpoint
 # ----------------------------
 @app.post("/predict")
 async def predict(file: UploadFile = File(...)):
@@ -91,8 +94,8 @@ async def predict(file: UploadFile = File(...)):
 
         preds = model.predict(x)
         class_idx = int(np.argmax(preds[0]))
-        class_name = LABEL_MAP.get(str(class_idx), f"Class {class_idx}")
         confidence = float(np.max(preds[0]))
+        class_name = LABEL_MAP.get(str(class_idx), f"Class {class_idx}")
 
         return {
             "class_idx": class_idx,
@@ -107,16 +110,17 @@ async def predict(file: UploadFile = File(...)):
         )
 
 # ----------------------------
-# Caption using BLIP
+# Caption endpoint
 # ----------------------------
 @app.post("/caption")
 async def caption(file: UploadFile = File(...)):
     try:
         img = Image.open(file.file).convert("RGB")
+        # BLIP expects PIL Image
         inputs = blip_processor(images=img, return_tensors="pt").to(device)
-        output_ids = blip_model.generate(**inputs)
+        with torch.no_grad():
+            output_ids = blip_model.generate(**inputs)
         caption_text = blip_processor.decode(output_ids[0], skip_special_tokens=True)
-
         return {"caption": caption_text}
 
     except Exception as e:
@@ -126,7 +130,7 @@ async def caption(file: UploadFile = File(...)):
         )
 
 # ----------------------------
-# Grad-CAM
+# Grad-CAM endpoint
 # ----------------------------
 @app.post("/gradcam")
 async def gradcam(file: UploadFile = File(...), class_idx: int = None):
@@ -162,20 +166,17 @@ async def gradcam(file: UploadFile = File(...), class_idx: int = None):
         # Apply colormap
         heatmap_colored = cm.jet(heatmap)[:, :, :3]
         heatmap_colored = np.uint8(255 * heatmap_colored)
-
-        # Overlay on original image
         heatmap_img = Image.fromarray(heatmap_colored).resize(IMG_SIZE)
-        overlay = Image.blend(img_resized, heatmap_img, alpha=0.4)
 
-        # Encode as base64
+        # Overlay original image
+        overlay = Image.blend(img_resized, heatmap_img, alpha=0.4)
         buffer = io.BytesIO()
         overlay.save(buffer, format="PNG")
         overlay_b64 = base64.b64encode(buffer.getvalue()).decode("utf-8")
 
         return {
-            "gradcam_layer": last_conv_layer_name,
-            "class_idx": class_idx,
-            "class_name": class_name,
+            "pred_class_idx": class_idx,
+            "pred_class_name": class_name,
             "heatmap_base64": f"data:image/png;base64,{overlay_b64}",
         }
 
@@ -186,17 +187,17 @@ async def gradcam(file: UploadFile = File(...), class_idx: int = None):
         )
 
 # ----------------------------
-# Feedback
+# Human feedback endpoint
 # ----------------------------
 @app.post("/feedback")
 async def feedback(file: UploadFile = File(...), entry: str = Form(...)):
     try:
-        # Save uploaded image
+        # Save image
         img_path = FEEDBACK_DIR / file.filename
         with open(img_path, "wb") as f:
             f.write(await file.read())
 
-        # Save feedback
+        # Save feedback JSON
         entry_data = json.loads(entry) if isinstance(entry, str) else entry
         feedback_log_path = FEEDBACK_DIR / "feedback_log.json"
         if feedback_log_path.exists():
