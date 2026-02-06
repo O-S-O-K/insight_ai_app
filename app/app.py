@@ -64,7 +64,7 @@ uploaded_file = st.file_uploader(
 
 if uploaded_file:
     img = Image.open(uploaded_file).convert("RGB")
-    st.image(img, caption="Uploaded image", use_container_width=True)
+    st.image(img, caption="Uploaded image", width='stretch')
 
     img_hash = image_hash(uploaded_file)
     reset_state_on_new_image(img_hash)
