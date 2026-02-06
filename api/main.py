@@ -3,11 +3,12 @@ from pathlib import Path
 import io
 import base64
 import traceback
+import json
 
 import numpy as np
 from PIL import Image
 import tensorflow as tf
-from fastapi import FastAPI, UploadFile, File
+from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.responses import JSONResponse
 from tensorflow.keras.models import load_model, Model
 from tensorflow.keras.layers import Conv2D
@@ -27,6 +28,10 @@ if str(ROOT) not in sys.path:
 MODELS_DIR = ROOT / "models"
 MODEL_PATH = MODELS_DIR / "cnn_model.h5"
 IMG_SIZE = (224, 224)
+
+# Directory for feedback
+FEEDBACK_DIR = ROOT / "feedback_images"
+FEEDBACK_DIR.mkdir(exist_ok=True)
 
 # ----------------------------
 # App
@@ -85,11 +90,25 @@ async def predict(file: UploadFile = File(...)):
         )
 
 # ----------------------------
-# Caption (mock for now)
+# Caption (real model if available)
 # ----------------------------
 @app.post("/caption")
 async def caption(file: UploadFile = File(...)):
-    return {"caption": "This is a mock caption for testing."}
+    """
+    Generate a caption for the image. For now, we can keep it mock, 
+    but in the future, replace with BLIP model call.
+    """
+    try:
+        # Example: load image (optional for future BLIP)
+        img = Image.open(file.file).convert("RGB")
+        # For now, mock caption:
+        return {"caption": "This is a mock caption for testing."}
+
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={"error": str(e), "trace": traceback.format_exc()},
+        )
 
 # ----------------------------
 # Grad-CAM
@@ -100,16 +119,12 @@ async def gradcam(file: UploadFile = File(...)):
         # Load image
         img = Image.open(file.file).convert("RGB")
         img_resized = img.resize(IMG_SIZE)
-
         x = np.expand_dims(np.array(img_resized), axis=0)
         x = preprocess_input(x)
 
         # Grad-CAM model
         last_conv_layer = model.get_layer(last_conv_layer_name)
-        grad_model = Model(
-            inputs=model.inputs,
-            outputs=[last_conv_layer.output, model.output],
-        )
+        grad_model = Model(inputs=model.inputs, outputs=[last_conv_layer.output, model.output])
 
         # Compute gradients
         with tf.GradientTape() as tape:
@@ -119,11 +134,9 @@ async def gradcam(file: UploadFile = File(...)):
 
         grads = tape.gradient(loss, conv_outputs)
         pooled_grads = tf.reduce_mean(grads, axis=(0, 1, 2))
-
         conv_outputs = conv_outputs[0]
         heatmap = conv_outputs @ pooled_grads[..., tf.newaxis]
         heatmap = tf.squeeze(heatmap)
-
         heatmap = tf.maximum(heatmap, 0) / tf.reduce_max(heatmap)
         heatmap = heatmap.numpy()
 
@@ -142,8 +155,48 @@ async def gradcam(file: UploadFile = File(...)):
 
         return {
             "gradcam_layer": last_conv_layer_name,
-            "heatmap_base64":f"data:image/png;base64,{overlay_b64}",
+            "heatmap_base64": f"data:image/png;base64,{overlay_b64}",
         }
+
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={"error": str(e), "trace": traceback.format_exc()},
+        )
+
+# ----------------------------
+# Human feedback
+# ----------------------------
+@app.post("/feedback")
+async def feedback(file: UploadFile = File(...), entry: str = Form(...)):
+    """
+    Save human feedback for an image.
+    """
+    try:
+        # Save uploaded image
+        img_path = FEEDBACK_DIR / file.filename
+        with open(img_path, "wb") as f:
+            f.write(await file.read())
+
+        # Save feedback entry as JSON
+        entry_data = json.loads(entry) if isinstance(entry, str) else entry
+        feedback_log_path = FEEDBACK_DIR / "feedback_log.json"
+        if feedback_log_path.exists():
+            with open(feedback_log_path, "r") as f:
+                log = json.load(f)
+        else:
+            log = []
+
+        log.append({
+            "filename": file.filename,
+            "feedback": entry_data.get("feedback"),
+            "rating": entry_data.get("rating"),
+        })
+
+        with open(feedback_log_path, "w") as f:
+            json.dump(log, f, indent=2)
+
+        return {"status": "success"}
 
     except Exception as e:
         return JSONResponse(
