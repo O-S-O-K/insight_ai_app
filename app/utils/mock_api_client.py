@@ -1,22 +1,9 @@
-def predict_image(_):
-    return {
-        "label": "mock_cat",
-        "confidence": 0.93
-    }
-
-def caption_image(_):
-    return "A mock image of a cat sitting on a chair."
-
-def gradcam_image(_):
-    return {
-        "heatmap": "mock_base64_string"
-    }
-
-def submit_feedback(_, __):
-    return {"status": "ok"}
-
 # utils/mock_api_client.py
 import base64
+
+# -----------------------
+# Mock API functions
+# -----------------------
 
 def predict_image(uploaded_file):
     return {
@@ -38,3 +25,11 @@ def submit_feedback(uploaded_file, entry):
     # Just print to console locally
     print("Feedback received:", entry)
     return {"status": "ok"}
+
+# -----------------------
+# Aliases matching app.py
+# -----------------------
+call_backend_predict = predict_image
+call_backend_caption = caption_image
+call_backend_gradcam = gradcam_image
+post_feedback_to_backend = submit_feedback
