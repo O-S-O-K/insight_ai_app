@@ -4,6 +4,7 @@ FROM python:3.10-slim
 ENV DEBIAN_FRONTEND=noninteractive
 ENV CUDA_VISIBLE_DEVICES=-1
 ENV TF_CPP_MIN_LOG_LEVEL=2
+ENV TF_USE_LEGACY_KERAS=1
 
 # System dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
