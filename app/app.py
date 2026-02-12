@@ -107,7 +107,7 @@ if uploaded_file:
     img_hash = image_hash(uploaded_file)
     reset_state_on_new_image(img_hash)
 
-    col1, col2, col3 = st.columns([1, 1])
+    col1, col2, col3 = st.columns([1, 1, 1])
 
     # ------------------------
     # Predict
