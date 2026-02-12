@@ -15,7 +15,13 @@ os.environ.setdefault("TF_USE_LEGACY_KERAS", "1")
 import numpy as np
 from PIL import Image
 import tensorflow as tf
-from tensorflow import keras
+
+# Prefer bundled tf_keras when available to ensure tf.keras compatibility on TF 2.15
+try:
+    import tf_keras as keras  # type: ignore
+except ImportError:  # pragma: no cover
+    from tensorflow import keras
+
 from tensorflow.keras import layers
 from tensorflow.keras.applications.mobilenet_v2 import preprocess_input
 import matplotlib.cm as cm

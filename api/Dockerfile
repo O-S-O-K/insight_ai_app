@@ -29,8 +29,12 @@ RUN pip install --upgrade pip \
 RUN python - <<'PY'
 import tensorflow as tf
 print('TF OK', tf.__version__)
-import tensorflow.keras as tk
-print('tf.keras OK', tk.__version__)
+try:
+    import tf_keras as tk
+    print('tf_keras OK', tk.__version__)
+except ImportError:
+    import tensorflow.keras as tk
+    print('tf.keras OK', tk.__version__)
 PY
 
 # Copy backend code and models
