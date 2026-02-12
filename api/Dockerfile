@@ -26,6 +26,10 @@ RUN pip install --upgrade pip \
 COPY api/ ./api
 COPY models/ ./models
 
+# Prepare writable data directories
+RUN mkdir -p /app/feedback_images \
+    && chown -R appuser:appuser /app
+
 # Switch to non-root
 USER appuser
 
