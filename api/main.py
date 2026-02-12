@@ -24,7 +24,7 @@ from fastapi.responses import JSONResponse
 ROOT = Path(__file__).resolve().parents[1]
 MODELS_DIR = ROOT / "models"
 FEEDBACK_DIR = ROOT / "feedback_images"
-FEEDBACK_DIR.mkdir(exist_ok=True)
+FEEDBACK_DIR.mkdir(parents=True, exist_ok=True)
 
 MODEL_PATH = MODELS_DIR / "cnn_model.h5"
 METADATA_PATH = MODELS_DIR / "model_metadata.json"

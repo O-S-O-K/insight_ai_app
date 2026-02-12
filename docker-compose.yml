@@ -2,7 +2,9 @@ version: "3.9"
 
 services:
   backend:
-    build: ./api
+    build:
+      context: .
+      dockerfile: api/Dockerfile
     container_name: insight-backend
     ports:
       - "8000:8000"
@@ -10,11 +12,13 @@ services:
       - PYTHONUNBUFFERED=1
 
   frontend:
-    build: ./app
+    build:
+      context: .
+      dockerfile: app/Dockerfile
     container_name: insight-frontend
     ports:
       - "8501:8501"
     environment:
-      - FASTAPI_URL=http://backend:8000
+      - INSIGHT_BACKEND_URL=http://backend:8000
     depends_on:
       - backend
