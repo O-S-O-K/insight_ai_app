@@ -2,6 +2,8 @@
 FROM python:3.10-slim
 
 ENV DEBIAN_FRONTEND=noninteractive
+ENV CUDA_VISIBLE_DEVICES=-1
+ENV TF_CPP_MIN_LOG_LEVEL=2
 
 # System dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -36,5 +38,5 @@ USER appuser
 # Expose FastAPI port
 EXPOSE 8000
 
-# Run FastAPI
-CMD ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Run FastAPI (honor Render's PORT if provided)
+CMD ["sh", "-c", "uvicorn api.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
