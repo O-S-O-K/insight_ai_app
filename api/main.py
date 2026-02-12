@@ -15,8 +15,8 @@ os.environ.setdefault("TF_USE_LEGACY_KERAS", "1")
 import numpy as np
 from PIL import Image
 import tensorflow as tf
-from tensorflow.keras.models import load_model, Model
-from tensorflow.keras.layers import Conv2D
+from tensorflow import keras
+from tensorflow.keras import layers
 from tensorflow.keras.applications.mobilenet_v2 import preprocess_input
 import matplotlib.cm as cm
 
@@ -50,11 +50,11 @@ else:
 # ----------------------------
 # Load CNN model
 # ----------------------------
-model = load_model(MODEL_PATH)
+model = keras.models.load_model(MODEL_PATH)
 
 def find_last_conv_layer(model):
     for layer in reversed(model.layers):
-        if isinstance(layer, Conv2D):
+        if isinstance(layer, layers.Conv2D):
             return layer.name
     raise ValueError("No Conv2D layer found in model.")
 
