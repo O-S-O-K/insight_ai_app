@@ -3,5 +3,11 @@
   "version": "v1.2",
   "architecture": "MobileNetV2 (ImageNet pretrained)",
   "trained_on": "User feedback + baseline dataset",
-  "last_updated": "2026-02-02"
+  "last_updated": "2026-02-02",
+  "classes": {
+    "0": "Cat",
+    "1": "Dog",
+    "2": "Bird"
+  }
 }
+

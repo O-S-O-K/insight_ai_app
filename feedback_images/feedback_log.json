@@ -3,5 +3,10 @@
     "filename": "download.jpg",
     "feedback": "test feedback",
     "rating": 3
+  },
+  {
+    "filename": "download.jpg",
+    "feedback": "",
+    "rating": 5
   }
 ]

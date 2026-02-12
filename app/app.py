@@ -12,12 +12,34 @@ from PIL import Image
 # ----------------------------
 # Backend configuration
 # ----------------------------
-os.environ["INSIGHT_BACKEND_URL"] = "http://localhost:8000"
 USE_MOCK = os.environ.get("USE_MOCK_API", "false").lower() == "true"
+
+
+def _resolve_backend_url() -> str | None:
+    """Prefer Streamlit secrets, then env; do not override if already set."""
+    secrets_url = None
+    try:
+        secrets_url = st.secrets.get("INSIGHT_BACKEND_URL")
+    except Exception:
+        secrets_url = None
+
+    env_url = os.environ.get("INSIGHT_BACKEND_URL")
+    chosen = secrets_url or env_url
+
+    if chosen:
+        os.environ["INSIGHT_BACKEND_URL"] = chosen
+    return chosen
+
 
 if USE_MOCK:
     from utils.mock_api_client import *
+    st.write("Using mock API client")
 else:
+    backend_url = _resolve_backend_url()
+    if not backend_url:
+        st.error("Backend URL is not configured. Set INSIGHT_BACKEND_URL in Streamlit secrets.")
+        st.stop()
+
     from utils.api_client import (
         predict_image as call_backend_predict,
         caption_image as call_backend_caption,
@@ -25,12 +47,12 @@ else:
         submit_feedback as post_feedback_to_backend,
     )
 
-st.write(f"Using {'mock' if USE_MOCK else 'live'} API client")
+    st.write(f"Using live API client @ {backend_url}")
 
 # ----------------------------
 # Streamlit config
 # ----------------------------
-st.set_page_config(page_title="Insight AI", layout="centered")
+st.set_page_config(page_title="Insight AI", layout="wide")
 ROOT = Path(__file__).resolve().parent
 
 # ----------------------------
@@ -43,6 +65,8 @@ if METADATA_PATH.exists():
     LABEL_MAP = metadata.get("classes", {})
 else:
     LABEL_MAP = {}
+
+TOP_K = 3  # number of top predictions to display
 
 # ----------------------------
 # Helpers
@@ -57,12 +81,14 @@ def reset_state_on_new_image(new_hash: str):
     if st.session_state.get("image_hash") != new_hash:
         st.session_state.image_hash = new_hash
         st.session_state.feedback_submitted = False
-        st.session_state.prediction = None
+        st.session_state.predictions = None
         st.session_state.caption = None
-        st.session_state.gradcam = None
+        st.session_state.gradcams = None
 
 def display_gradcam_image(overlay_img: Image.Image, alpha: float, original_img: Image.Image):
     """Blend overlay with original using alpha and show in Streamlit"""
+    original_img = original_img.convert("RGB")
+    overlay_img = overlay_img.convert("RGB").resize(original_img.size)
     blended = Image.blend(original_img, overlay_img, alpha)
     st.image(blended, caption="Grad-CAM Overlay", width="stretch")
 
@@ -81,7 +107,7 @@ if uploaded_file:
     img_hash = image_hash(uploaded_file)
     reset_state_on_new_image(img_hash)
 
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3 = st.columns([1, 1])
 
     # ------------------------
     # Predict
@@ -91,18 +117,14 @@ if uploaded_file:
             with st.spinner("Running prediction..."):
                 try:
                     result = call_backend_predict(uploaded_file)
-                    # Map class_idx to human-readable name if metadata exists
-                    class_idx = result.get("class_idx")
-                    result["class_name"] = LABEL_MAP.get(str(class_idx), f"Class {class_idx}")
-                    st.session_state.prediction = result
+                    st.session_state.predictions = result.get("predictions", [])
                 except Exception as e:
                     st.error(str(e))
 
-    if st.session_state.get("prediction"):
-        pred = st.session_state.prediction
-        st.subheader("Prediction")
-        st.write(f"Class: **{pred['class_name']}** (Index: {pred['class_idx']})")
-        st.write(f"Confidence: **{pred['confidence']*100:.2f}%**")
+    if st.session_state.get("predictions"):
+        st.subheader("Top Predictions")
+        for i, pred in enumerate(st.session_state.predictions, start=1):
+            st.write(f"{i}. **{pred['class_name']}** (Index: {pred['class_idx']}) - Confidence: {pred['confidence']*100:.2f}%")
 
     # ------------------------
     # Caption
@@ -126,25 +148,21 @@ if uploaded_file:
     with col3:
         alpha = st.slider("Heatmap intensity", 0.0, 1.0, 0.4, 0.05)
         if st.button("Grad-CAM"):
-            with st.spinner("Computing Grad-CAM..."):
+            with st.spinner("Computing Grad-CAM for top predictions..."):
                 try:
-                    class_idx = st.session_state.get("prediction", {}).get("class_idx")
-                    result = call_backend_gradcam(uploaded_file, class_idx=class_idx)
-                    # Map Grad-CAM class to human-readable label
-                    pred_idx = result.get("pred_class_idx")
-                    result["pred_class_name"] = LABEL_MAP.get(str(pred_idx), f"Class {pred_idx}")
-                    st.session_state.gradcam = result
+                    result = call_backend_gradcam(uploaded_file, top_k=TOP_K)
+                    st.session_state.gradcams = result.get("gradcams", [])
                 except Exception as e:
                     st.error(str(e))
 
-    if st.session_state.get("gradcam"):
-        st.subheader("Grad-CAM Output")
-        gradcam_data = st.session_state.gradcam
-        st.write(f"Class: **{gradcam_data['pred_class_name']}** (Index: {gradcam_data['pred_class_idx']})")
-        # Decode base64 overlay
-        b64_data = gradcam_data["heatmap_base64"].split(",")[1]
-        overlay_img = Image.open(io.BytesIO(base64.b64decode(b64_data)))
-        display_gradcam_image(overlay_img, alpha, img)
+    if st.session_state.get("gradcams"):
+        st.subheader("Grad-CAM Outputs")
+        tabs = st.tabs([f"{g['class_name']} ({g['confidence']*100:.1f}%)" for g in st.session_state.gradcams])
+        for tab, gradcam_data in zip(tabs, st.session_state.gradcams):
+            with tab:
+                b64_data = gradcam_data["heatmap_base64"].split(",")[1]
+                overlay_img = Image.open(io.BytesIO(base64.b64decode(b64_data)))
+                display_gradcam_image(overlay_img, alpha, img)
 
     # ------------------------
     # Human Feedback

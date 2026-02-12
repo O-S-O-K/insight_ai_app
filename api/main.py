@@ -1,11 +1,11 @@
 # main.py
 import os
-import sys
 from pathlib import Path
 import io
 import base64
 import json
 import traceback
+import hashlib
 
 import numpy as np
 from PIL import Image
@@ -30,6 +30,7 @@ MODEL_PATH = MODELS_DIR / "cnn_model.h5"
 METADATA_PATH = MODELS_DIR / "model_metadata.json"
 
 IMG_SIZE = (224, 224)
+TOP_K = 3  # number of top predictions to return
 
 # ----------------------------
 # Load model metadata
@@ -83,7 +84,7 @@ def health():
     }
 
 # ----------------------------
-# Prediction endpoint
+# Prediction endpoint (top-K)
 # ----------------------------
 @app.post("/predict")
 async def predict(file: UploadFile = File(...)):
@@ -92,16 +93,18 @@ async def predict(file: UploadFile = File(...)):
         x = np.expand_dims(np.array(img), axis=0)
         x = preprocess_input(x)
 
-        preds = model.predict(x)
-        class_idx = int(np.argmax(preds[0]))
-        confidence = float(np.max(preds[0]))
-        class_name = LABEL_MAP.get(str(class_idx), f"Class {class_idx}")
+        preds = model.predict(x)[0]
+        top_indices = preds.argsort()[-TOP_K:][::-1]  # top K indices
 
-        return {
-            "class_idx": class_idx,
-            "class_name": class_name,
-            "confidence": confidence,
-        }
+        top_predictions = []
+        for idx in top_indices:
+            top_predictions.append({
+                "class_idx": int(idx),
+                "class_name": LABEL_MAP.get(str(idx), f"Class {idx}"),
+                "confidence": float(preds[idx])
+            })
+
+        return {"predictions": top_predictions}
 
     except Exception as e:
         return JSONResponse(
@@ -116,7 +119,6 @@ async def predict(file: UploadFile = File(...)):
 async def caption(file: UploadFile = File(...)):
     try:
         img = Image.open(file.file).convert("RGB")
-        # BLIP expects PIL Image
         inputs = blip_processor(images=img, return_tensors="pt").to(device)
         with torch.no_grad():
             output_ids = blip_model.generate(**inputs)
@@ -130,10 +132,10 @@ async def caption(file: UploadFile = File(...)):
         )
 
 # ----------------------------
-# Grad-CAM endpoint
+# Grad-CAM endpoint (multi-class)
 # ----------------------------
 @app.post("/gradcam")
-async def gradcam(file: UploadFile = File(...), class_idx: int = None):
+async def gradcam(file: UploadFile = File(...), top_k: int = TOP_K):
     try:
         img = Image.open(file.file).convert("RGB")
         img_resized = img.resize(IMG_SIZE)
@@ -144,41 +146,44 @@ async def gradcam(file: UploadFile = File(...), class_idx: int = None):
         last_conv_layer = model.get_layer(last_conv_layer_name)
         grad_model = Model(inputs=model.inputs, outputs=[last_conv_layer.output, model.output])
 
-        # Determine target class
-        preds = model.predict(x)
-        if class_idx is None:
-            class_idx = int(np.argmax(preds[0]))
-        class_name = LABEL_MAP.get(str(class_idx), f"Class {class_idx}")
+        preds = model.predict(x)[0]
+        top_indices = preds.argsort()[-top_k:][::-1]
 
-        # Compute gradients
-        with tf.GradientTape() as tape:
-            conv_outputs, predictions = grad_model(x)
-            loss = predictions[:, class_idx]
+        gradcam_results = []
 
-        grads = tape.gradient(loss, conv_outputs)
-        pooled_grads = tf.reduce_mean(grads, axis=(0, 1, 2))
-        conv_outputs = conv_outputs[0]
-        heatmap = conv_outputs @ pooled_grads[..., tf.newaxis]
-        heatmap = tf.squeeze(heatmap)
-        heatmap = tf.maximum(heatmap, 0) / tf.reduce_max(heatmap)
-        heatmap = heatmap.numpy()
+        for idx in top_indices:
+            # Compute Grad-CAM
+            with tf.GradientTape() as tape:
+                conv_outputs, predictions = grad_model(x)
+                loss = predictions[:, idx]
 
-        # Apply colormap
-        heatmap_colored = cm.jet(heatmap)[:, :, :3]
-        heatmap_colored = np.uint8(255 * heatmap_colored)
-        heatmap_img = Image.fromarray(heatmap_colored).resize(IMG_SIZE)
+            grads = tape.gradient(loss, conv_outputs)
+            pooled_grads = tf.reduce_mean(grads, axis=(0,1,2))
+            conv_outputs = conv_outputs[0]
+            heatmap = conv_outputs @ pooled_grads[..., tf.newaxis]
+            heatmap = tf.squeeze(heatmap)
+            heatmap = tf.maximum(heatmap, 0) / tf.reduce_max(heatmap)
+            heatmap = heatmap.numpy()
 
-        # Overlay original image
-        overlay = Image.blend(img_resized, heatmap_img, alpha=0.4)
-        buffer = io.BytesIO()
-        overlay.save(buffer, format="PNG")
-        overlay_b64 = base64.b64encode(buffer.getvalue()).decode("utf-8")
+            # Apply colormap
+            heatmap_colored = cm.jet(heatmap)[:, :, :3]
+            heatmap_colored = np.uint8(255 * heatmap_colored)
+            heatmap_img = Image.fromarray(heatmap_colored).resize(IMG_SIZE)
 
-        return {
-            "pred_class_idx": class_idx,
-            "pred_class_name": class_name,
-            "heatmap_base64": f"data:image/png;base64,{overlay_b64}",
-        }
+            # Overlay original image
+            overlay = Image.blend(img_resized, heatmap_img, alpha=0.4)
+            buffer = io.BytesIO()
+            overlay.save(buffer, format="PNG")
+            overlay_b64 = base64.b64encode(buffer.getvalue()).decode("utf-8")
+
+            gradcam_results.append({
+                "class_idx": int(idx),
+                "class_name": LABEL_MAP.get(str(idx), f"Class {idx}"),
+                "confidence": float(preds[idx]),
+                "heatmap_base64": f"data:image/png;base64,{overlay_b64}"
+            })
+
+        return {"gradcams": gradcam_results}
 
     except Exception as e:
         return JSONResponse(
