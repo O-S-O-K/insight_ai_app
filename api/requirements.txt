@@ -9,10 +9,10 @@ requests>=2.32,<3
 # ============================
 # Image & numerical processing
 # ============================
-numpy>=1.26,<3
+numpy==1.26.4
 pillow>=10.3,<11
-matplotlib>=3.10,<4
-opencv-python-headless>=4.13,<5
+matplotlib>=3.8,<3.11
+opencv-python-headless==4.8.1.78
 
 # ============================
 # Deep learning (CPU-safe on Render)
