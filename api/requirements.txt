@@ -9,7 +9,7 @@ requests>=2.32,<3
 # ============================
 # Image & numerical processing
 # ============================
-numpy>=1.24,<2
+numpy==1.26.4
 pillow>=10.3,<11
 matplotlib==3.8.4
 opencv-python-headless==4.8.1.78
@@ -26,7 +26,7 @@ h5py>=3.15,<4
 torch==2.1.2
 torchvision==0.16.2
 transformers>=4.52,<5
-typing-extensions>=4.9,<5
+typing-extensions==4.9.0
 sentencepiece>=0.1.99
 huggingface-hub>=0.36,<1
 safetensors>=0.4,<1

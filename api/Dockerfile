@@ -25,6 +25,14 @@ COPY api/requirements.txt .
 RUN pip install --upgrade pip \
     && pip install --no-cache-dir -r requirements.txt
 
+# Fail fast if TensorFlow not importable
+RUN python - <<'PY'
+import tensorflow as tf
+print('TF OK', tf.__version__)
+import tensorflow.keras as tk
+print('tf.keras OK', tk.__version__)
+PY
+
 # Copy backend code and models
 COPY api/ ./api
 COPY models/ ./models
