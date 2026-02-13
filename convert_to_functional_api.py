@@ -72,46 +72,24 @@ try:
     # Create new input layer with correct shape
     inputs = tf.keras.Input(shape=INPUT_SHAPE, name='input_layer')
 
-    # Get MobileNetV2 output (before the top layers)
-    # The Sequential model has: MobileNetV2 -> GlobalAvgPooling -> Dense
-    # We need to extract just the MobileNetV2 part and rebuild
+    # Rebuild from scratch using Keras MobileNetV2 application
+    # (Cannot reuse nested layers due to residual connections)
+    print("  Rebuilding from Keras MobileNetV2 application...")
+    from tensorflow.keras.applications import MobileNetV2
+    from tensorflow.keras import layers
 
-    # Option 1: If mobilenet is the full pretrained model, use it directly
-    if hasattr(mobilenet, 'layers') and len(mobilenet.layers) > 10:
-        print(f"  Using extracted MobileNetV2 with {len(mobilenet.layers)} layers")
-        # Create new model with correct input
-        x = inputs
+    # Load pretrained MobileNetV2 (without top layers)
+    base_model = MobileNetV2(
+        input_shape=INPUT_SHAPE,
+        include_top=False,
+        weights='imagenet',
+        pooling='avg'  # Global average pooling
+    )
 
-        # Apply all layers from MobileNetV2 except the input layer
-        for layer in mobilenet.layers:
-            if not isinstance(layer, tf.keras.layers.InputLayer):
-                x = layer(x)
+    x = base_model(inputs, training=False)
 
-        # Add the remaining top layers from Sequential model
-        for i, layer in enumerate(seq_model.layers):
-            if layer != mobilenet:
-                print(f"  Adding top layer: {layer.name} ({type(layer).__name__})")
-                x = layer(x)
-
-        outputs = x
-    else:
-        # Option 2: Rebuild from scratch using Keras MobileNetV2
-        print("  Rebuilding from Keras MobileNetV2 application...")
-        from tensorflow.keras.applications import MobileNetV2
-        from tensorflow.keras import layers
-
-        # Load pretrained MobileNetV2 (without top layers)
-        base_model = MobileNetV2(
-            input_shape=INPUT_SHAPE,
-            include_top=False,
-            weights='imagenet',
-            pooling='avg'  # Global average pooling
-        )
-
-        x = base_model(inputs, training=False)
-
-        # Add final classification layer
-        outputs = layers.Dense(NUM_CLASSES, activation='softmax', name='predictions')(x)
+    # Add final classification layer
+    outputs = layers.Dense(NUM_CLASSES, activation='softmax', name='predictions')(x)
 
     # Create functional model
     functional_model = tf.keras.Model(inputs=inputs, outputs=outputs, name='cnn_baseline_functional')
