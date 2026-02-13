@@ -38,6 +38,12 @@ MODEL_PATH = MODELS_DIR / "cnn_model.h5"
 SAVEDMODEL_DIR = MODELS_DIR / "cnn_baseline_savedmodel"
 METADATA_PATH = MODELS_DIR / "model_metadata.json"
 
+# Alternative model paths to try
+ALT_MODEL_PATHS = [
+    MODELS_DIR / "cnn_baseline_functional.h5",
+    MODELS_DIR / "cnn_baseline.h5",
+]
+
 IMG_SIZE = (224, 224)
 TOP_K = 3  # number of top predictions to return
 
@@ -55,7 +61,7 @@ else:
 # Load CNN model with proper error handling
 # ----------------------------
 def load_model_safe():
-    """Load model with fallback mechanisms"""
+    """Load model with fallback mechanisms and version compatibility handling"""
     model = None
     load_errors = []
 
@@ -87,26 +93,71 @@ def load_model_safe():
 
     # Fallback to H5 format if SavedModel didn't work
     if model is None and MODEL_PATH.exists():
-        try:
-            print(f"Attempting to load H5 model from {MODEL_PATH}")
-            model = tf.keras.models.load_model(str(MODEL_PATH), compile=False)
-            print(f"H5 model loaded successfully, type: {type(model)}")
+        print(f"Attempting to load H5 model from {MODEL_PATH}")
 
-            # Validate H5 model
-            if not hasattr(model, 'layers'):
-                raise AttributeError(f"H5 model (type: {type(model)}) does not have 'layers' attribute")
-            if not hasattr(model, 'predict'):
-                raise AttributeError(f"H5 model (type: {type(model)}) does not have 'predict' method")
+        # Try multiple H5 loading strategies for compatibility
+        loading_strategies = [
+            ("Standard loading", lambda: tf.keras.models.load_model(str(MODEL_PATH), compile=False)),
+            ("Safe mode disabled", lambda: tf.keras.models.load_model(str(MODEL_PATH), compile=False, safe_mode=False)),
+        ]
 
-            print(f"H5 model validation successful")
-        except Exception as e:
-            error_msg = f"H5 model loading failed: {e}"
-            print(error_msg)
-            load_errors.append(error_msg)
-            raise RuntimeError(f"Failed to load model from both SavedModel and H5 formats. Errors: {'; '.join(load_errors)}")
+        for strategy_name, load_fn in loading_strategies:
+            try:
+                print(f"  Trying: {strategy_name}")
+                model = load_fn()
+                print(f"  ✓ H5 model loaded successfully with {strategy_name}, type: {type(model)}")
 
+                # Validate H5 model
+                if not hasattr(model, 'layers'):
+                    raise AttributeError(f"H5 model (type: {type(model)}) does not have 'layers' attribute")
+                if not hasattr(model, 'predict'):
+                    raise AttributeError(f"H5 model (type: {type(model)}) does not have 'predict' method")
+
+                print(f"  ✓ H5 model validation successful")
+                break  # Success, exit the loop
+
+            except Exception as e:
+                error_msg = f"{strategy_name} failed: {str(e)[:100]}"
+                print(f"  ✗ {error_msg}")
+                load_errors.append(error_msg)
+                model = None
+                continue
+
+    # Try alternative H5 model files if primary failed
     if model is None:
-        raise RuntimeError(f"No valid model found at {SAVEDMODEL_DIR} or {MODEL_PATH}. Errors: {'; '.join(load_errors)}")
+        for alt_path in ALT_MODEL_PATHS:
+            if not alt_path.exists():
+                continue
+
+            print(f"Attempting to load alternative H5 model from {alt_path.name}")
+            try:
+                model = tf.keras.models.load_model(str(alt_path), compile=False, safe_mode=False)
+                print(f"  ✓ Alternative H5 model loaded successfully, type: {type(model)}")
+
+                # Validate
+                if not hasattr(model, 'layers'):
+                    raise AttributeError("Model missing 'layers' attribute")
+                if not hasattr(model, 'predict'):
+                    raise AttributeError("Model missing 'predict' method")
+
+                print(f"  ✓ Alternative model validation successful")
+                break
+
+            except Exception as e:
+                error_msg = f"Alternative {alt_path.name} failed: {str(e)[:100]}"
+                print(f"  ✗ {error_msg}")
+                load_errors.append(error_msg)
+                model = None
+                continue
+
+    # If all loading strategies failed
+    if model is None:
+        raise RuntimeError(
+            f"Failed to load model from SavedModel and all H5 formats.\n"
+            f"Errors:\n" + "\n".join(f"  - {err}" for err in load_errors) + "\n\n"
+            f"The model files appear to be incompatible with TensorFlow 2.10.1.\n"
+            f"Please regenerate the model using: python regenerate_savedmodel.py"
+        )
 
     print(f"✓ Model loaded successfully with {len(model.layers)} layers")
     return model
