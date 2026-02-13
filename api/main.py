@@ -43,12 +43,13 @@ MODELS_DIR = ROOT / "models"
 FEEDBACK_DIR = ROOT / "feedback_images"
 FEEDBACK_DIR.mkdir(parents=True, exist_ok=True)
 
-MODEL_PATH = MODELS_DIR / "cnn_model.h5"
+MODEL_PATH = MODELS_DIR / "cnn_model_fixed.h5"
 SAVEDMODEL_DIR = MODELS_DIR / "cnn_baseline_savedmodel"
 METADATA_PATH = MODELS_DIR / "model_metadata.json"
 
-# Alternative model paths to try
+# Alternative model paths to try (fallback to old models if needed)
 ALT_MODEL_PATHS = [
+    MODELS_DIR / "cnn_model.h5",  # Old model as fallback
     MODELS_DIR / "cnn_baseline_functional.h5",
     MODELS_DIR / "cnn_baseline.h5",
 ]
