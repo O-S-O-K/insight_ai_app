@@ -195,31 +195,51 @@ def find_last_conv_layer(model):
 
     raise ValueError("No Conv2D layer found in model. Grad-CAM requires a convolutional layer.")
 
-# Load and validate model
-print("=" * 60)
-print("INITIALIZING INSIGHT AI BACKEND")
-print("=" * 60)
-model = load_model_safe()
-last_conv_layer_name = find_last_conv_layer(model)
-print(f"✓ Grad-CAM configured for layer: {last_conv_layer_name}")
-print("=" * 60)
-
 # ----------------------------
-# Load BLIP model for captioning
+# Global variables for models (loaded at startup)
 # ----------------------------
-from transformers import BlipProcessor, BlipForConditionalGeneration
-import torch
-
-blip_processor = BlipProcessor.from_pretrained("Salesforce/blip-image-captioning-base")
-blip_model = BlipForConditionalGeneration.from_pretrained("Salesforce/blip-image-captioning-base")
-blip_model.eval()
-device = "cuda" if torch.cuda.is_available() else "cpu"
-blip_model.to(device)
+model = None
+last_conv_layer_name = None
+blip_processor = None
+blip_model = None
+device = None
 
 # ----------------------------
 # FastAPI app
 # ----------------------------
 app = FastAPI(title="Insight AI API")
+
+# ----------------------------
+# Startup event - load models after uvicorn binds to port
+# ----------------------------
+@app.on_event("startup")
+async def startup_event():
+    """Load models when FastAPI starts up (after port binding)"""
+    global model, last_conv_layer_name, blip_processor, blip_model, device
+
+    print("=" * 60)
+    print("INITIALIZING INSIGHT AI BACKEND")
+    print("=" * 60)
+
+    # Load CNN model
+    model = load_model_safe()
+    last_conv_layer_name = find_last_conv_layer(model)
+    print(f"✓ Grad-CAM configured for layer: {last_conv_layer_name}")
+
+    # Load BLIP model
+    print("Loading BLIP captioning model...")
+    from transformers import BlipProcessor, BlipForConditionalGeneration
+    import torch
+
+    blip_processor = BlipProcessor.from_pretrained("Salesforce/blip-image-captioning-base")
+    blip_model = BlipForConditionalGeneration.from_pretrained("Salesforce/blip-image-captioning-base")
+    blip_model.eval()
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    blip_model.to(device)
+
+    print("=" * 60)
+    print("✓ ALL MODELS LOADED SUCCESSFULLY")
+    print("=" * 60)
 
 # ----------------------------
 # Health check
