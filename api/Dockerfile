@@ -42,12 +42,13 @@ test_model = models.Sequential([
 ])
 print('Test model creation OK')
 
-# Verify model has expected attributes
+# Verify model has expected attributes (Keras 3 compatible)
 assert hasattr(test_model, 'layers'), "Model missing 'layers' attribute"
 assert hasattr(test_model, 'predict'), "Model missing 'predict' method"
 assert hasattr(test_model, 'get_layer'), "Model missing 'get_layer' method"
 assert hasattr(test_model, 'inputs'), "Model missing 'inputs' attribute"
-assert hasattr(test_model, 'output'), "Model missing 'output' attribute"
+# Keras 3 uses 'outputs' (plural) instead of 'output'
+assert hasattr(test_model, 'outputs') or hasattr(test_model, 'output'), "Model missing 'outputs/output' attribute"
 print('Model attributes validation OK')
 print(f'Model has {len(test_model.layers)} layers')
 PY
