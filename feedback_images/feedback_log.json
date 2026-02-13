@@ -8,5 +8,15 @@
     "filename": "download.jpg",
     "feedback": "",
     "rating": 5
+  },
+  {
+    "filename": "download.jpg",
+    "feedback": "there is a cat in the photo, but the gradcam was not accurate.",
+    "rating": 2
+  },
+  {
+    "filename": "images.jpg",
+    "feedback": "",
+    "rating": 1
   }
 ]

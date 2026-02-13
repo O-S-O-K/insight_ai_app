@@ -7,7 +7,7 @@ import io
 import base64
 
 import streamlit as st
-from PIL import Image
+from PIL import Image, ImageOps
 
 # ----------------------------
 # Backend configuration
@@ -101,8 +101,10 @@ st.caption("Explainable image classification with BLIP captions and Grad-CAM vis
 uploaded_file = st.file_uploader("Upload an image", type=["jpg", "jpeg", "png"])
 
 if uploaded_file:
+    # Load image and handle EXIF orientation (important for mobile uploads)
     img = Image.open(uploaded_file).convert("RGB")
-    st.image(img, caption="Uploaded image", width="stretch")
+    img = ImageOps.exif_transpose(img)  # Auto-rotate based on EXIF data
+    st.image(img, caption="Uploaded image", use_container_width=True)
 
     img_hash = image_hash(uploaded_file)
     reset_state_on_new_image(img_hash)
@@ -124,7 +126,7 @@ if uploaded_file:
     if st.session_state.get("predictions"):
         st.subheader("Top Predictions")
         for i, pred in enumerate(st.session_state.predictions, start=1):
-            st.write(f"{i}. **{pred['class_name']}** (Index: {pred['class_idx']}) - Confidence: {pred['confidence']*100:.2f}%")
+            st.write(f"{i}. **{pred['class_name']}** - Confidence: {pred['confidence']*100:.2f}%")
 
     # ------------------------
     # Caption
@@ -146,7 +148,6 @@ if uploaded_file:
     # Grad-CAM
     # ------------------------
     with col3:
-        alpha = st.slider("Heatmap intensity", 0.0, 1.0, 0.4, 0.05)
         if st.button("Grad-CAM"):
             with st.spinner("Computing Grad-CAM for top predictions..."):
                 try:
@@ -157,6 +158,7 @@ if uploaded_file:
 
     if st.session_state.get("gradcams"):
         st.subheader("Grad-CAM Outputs")
+        alpha = st.slider("Heatmap intensity", 0.0, 1.0, 0.4, 0.05)
         tabs = st.tabs([f"{g['class_name']} ({g['confidence']*100:.1f}%)" for g in st.session_state.gradcams])
         for tab, gradcam_data in zip(tabs, st.session_state.gradcams):
             with tab:

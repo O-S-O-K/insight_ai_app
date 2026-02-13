@@ -38,7 +38,7 @@ def predict_image(file_obj, top_k: int = 3):
     """Return top-K predictions from backend"""
     files = {"file": _file_tuple(file_obj)}
     data = {"top_k": str(top_k)}
-    r = requests.post(f"{_get_base_url()}/predict", files=files, data=data, timeout=30)
+    r = requests.post(f"{_get_base_url()}/predict", files=files, data=data, timeout=60)
     return _handle_response(r)
 
 # ----------------------------
@@ -57,7 +57,7 @@ def gradcam_image(file_obj, top_k: int = 3):
 def caption_image(file_obj):
     """Return BLIP caption for the image"""
     files = {"file": _file_tuple(file_obj)}
-    r = requests.post(f"{_get_base_url()}/caption", files=files, timeout=30)
+    r = requests.post(f"{_get_base_url()}/caption", files=files, timeout=60)
     return _handle_response(r)
 
 # ----------------------------

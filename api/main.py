@@ -64,14 +64,13 @@ MODELS_DIR = ROOT / "models"
 FEEDBACK_DIR = ROOT / "feedback_images"
 FEEDBACK_DIR.mkdir(parents=True, exist_ok=True)
 
-MODEL_PATH = MODELS_DIR / "cnn_model_fixed.h5"
+MODEL_PATH = MODELS_DIR / "cnn_baseline_functional.h5"
 SAVEDMODEL_DIR = MODELS_DIR / "cnn_baseline_savedmodel"
 METADATA_PATH = MODELS_DIR / "model_metadata.json"
 
 # Alternative model paths to try (fallback to old models if needed)
 ALT_MODEL_PATHS = [
-    MODELS_DIR / "cnn_model.h5",  # Old model as fallback
-    MODELS_DIR / "cnn_baseline_functional.h5",
+    MODELS_DIR / "cnn_model_fixed.h5",
     MODELS_DIR / "cnn_baseline.h5",
 ]
 
@@ -96,34 +95,8 @@ def load_model_safe():
     model = None
     load_errors = []
 
-    # Try SavedModel format first
-    if SAVEDMODEL_DIR.exists():
-        try:
-            print(f"Attempting to load SavedModel from {SAVEDMODEL_DIR}")
-            temp_model = tf.keras.models.load_model(str(SAVEDMODEL_DIR), compile=False)
-            print(f"SavedModel loaded, type: {type(temp_model)}")
-
-            # Validate it's a proper Keras model, not a _UserObject
-            if not hasattr(temp_model, 'layers'):
-                print(f"WARNING: SavedModel loaded as {type(temp_model).__name__} without 'layers' attribute")
-                print("This SavedModel was likely created with tf.saved_model.save() instead of model.save()")
-                print("Falling back to H5 format...")
-                temp_model = None
-            elif not hasattr(temp_model, 'predict'):
-                print(f"WARNING: SavedModel missing 'predict' method")
-                print("Falling back to H5 format...")
-                temp_model = None
-            else:
-                print(f"SavedModel validation successful")
-                model = temp_model
-        except Exception as e:
-            error_msg = f"SavedModel loading failed: {e}"
-            print(error_msg)
-            load_errors.append(error_msg)
-            model = None
-
-    # Fallback to H5 format if SavedModel didn't work
-    if model is None and MODEL_PATH.exists():
+    # Try H5 format FIRST (SavedModel has compatibility issues)
+    if MODEL_PATH.exists():
         print(f"Attempting to load H5 model from {MODEL_PATH}")
 
         try:
@@ -174,10 +147,10 @@ def load_model_safe():
     # If all loading strategies failed
     if model is None:
         raise RuntimeError(
-            f"Failed to load model from SavedModel and all H5 formats.\n"
+            f"Failed to load model from all H5 formats.\n"
             f"Errors:\n" + "\n".join(f"  - {err}" for err in load_errors) + "\n\n"
-            f"The model files appear to be incompatible with TensorFlow 2.10.1.\n"
-            f"Please regenerate the model using: python regenerate_savedmodel.py"
+            f"The model files appear to be incompatible with TensorFlow 2.15.0.\n"
+            f"Please regenerate the model using: python fix_models_for_tf2.10.py"
         )
 
     print(f"✓ Model loaded successfully with {len(model.layers)} layers")
@@ -408,13 +381,50 @@ async def gradcam(file: UploadFile = File(...), top_k: int = TOP_K):
         if not hasattr(model, 'output'):
             raise AttributeError("Model does not have 'output' attribute required for Grad-CAM")
 
-        # Grad-CAM model
+        # Grad-CAM model - handle nested layers properly
+        # Check if layer is at top level
         try:
             last_conv_layer = model.get_layer(last_conv_layer_name)
-        except ValueError as e:
-            raise ValueError(f"Could not find layer '{last_conv_layer_name}' in model: {e}")
+            # Direct access - simple case
+            grad_model = Model(inputs=model.inputs, outputs=[last_conv_layer.output, model.output])
+        except ValueError:
+            # Layer is nested - need to build connection through parent model
+            # Find which layer contains the nested conv layer
+            parent_model = None
+            parent_idx = None
+            for i, layer in enumerate(model.layers):
+                if hasattr(layer, 'layers'):
+                    try:
+                        _ = layer.get_layer(last_conv_layer_name)
+                        parent_model = layer
+                        parent_idx = i
+                        break
+                    except ValueError:
+                        continue
 
-        grad_model = Model(inputs=model.inputs, outputs=[last_conv_layer.output, model.output])
+            if parent_model is None:
+                raise ValueError(f"Could not find layer '{last_conv_layer_name}' in model or nested layers")
+
+            # Get the nested conv layer
+            nested_conv_layer = parent_model.get_layer(last_conv_layer_name)
+
+            # Create a model from parent's input that outputs BOTH conv output AND parent's final output
+            parent_with_conv = Model(
+                inputs=parent_model.input,
+                outputs=[nested_conv_layer.output, parent_model.output]
+            )
+
+            # Now build the full model: apply parent_with_conv to top-level input
+            x_in = model.inputs[0]
+            conv_output, parent_output = parent_with_conv(x_in)
+
+            # Apply remaining layers (after parent_model) to parent_output
+            final_output = parent_output
+            for layer in model.layers[parent_idx + 1:]:
+                final_output = layer(final_output)
+
+            # Create grad_model with both outputs from the same forward pass
+            grad_model = Model(inputs=model.inputs, outputs=[conv_output, final_output])
 
         preds = model.predict(x)[0]
         top_indices = preds.argsort()[-top_k:][::-1]
