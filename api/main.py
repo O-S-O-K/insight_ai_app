@@ -57,39 +57,58 @@ else:
 def load_model_safe():
     """Load model with fallback mechanisms"""
     model = None
+    load_errors = []
 
     # Try SavedModel format first
     if SAVEDMODEL_DIR.exists():
         try:
-            print(f"Loading SavedModel from {SAVEDMODEL_DIR}")
-            model = tf.keras.models.load_model(str(SAVEDMODEL_DIR), compile=False)
-            print(f"Model loaded successfully, type: {type(model)}")
+            print(f"Attempting to load SavedModel from {SAVEDMODEL_DIR}")
+            temp_model = tf.keras.models.load_model(str(SAVEDMODEL_DIR), compile=False)
+            print(f"SavedModel loaded, type: {type(temp_model)}")
+
+            # Validate it's a proper Keras model, not a _UserObject
+            if not hasattr(temp_model, 'layers'):
+                print(f"WARNING: SavedModel loaded as {type(temp_model).__name__} without 'layers' attribute")
+                print("This SavedModel was likely created with tf.saved_model.save() instead of model.save()")
+                print("Falling back to H5 format...")
+                temp_model = None
+            elif not hasattr(temp_model, 'predict'):
+                print(f"WARNING: SavedModel missing 'predict' method")
+                print("Falling back to H5 format...")
+                temp_model = None
+            else:
+                print(f"SavedModel validation successful")
+                model = temp_model
         except Exception as e:
-            print(f"SavedModel loading failed: {e}")
+            error_msg = f"SavedModel loading failed: {e}"
+            print(error_msg)
+            load_errors.append(error_msg)
             model = None
 
-    # Fallback to H5 format
+    # Fallback to H5 format if SavedModel didn't work
     if model is None and MODEL_PATH.exists():
         try:
-            print(f"Loading H5 model from {MODEL_PATH}")
+            print(f"Attempting to load H5 model from {MODEL_PATH}")
             model = tf.keras.models.load_model(str(MODEL_PATH), compile=False)
-            print(f"Model loaded successfully, type: {type(model)}")
+            print(f"H5 model loaded successfully, type: {type(model)}")
+
+            # Validate H5 model
+            if not hasattr(model, 'layers'):
+                raise AttributeError(f"H5 model (type: {type(model)}) does not have 'layers' attribute")
+            if not hasattr(model, 'predict'):
+                raise AttributeError(f"H5 model (type: {type(model)}) does not have 'predict' method")
+
+            print(f"H5 model validation successful")
         except Exception as e:
-            print(f"H5 model loading failed: {e}")
-            raise RuntimeError("Failed to load model from both SavedModel and H5 formats")
+            error_msg = f"H5 model loading failed: {e}"
+            print(error_msg)
+            load_errors.append(error_msg)
+            raise RuntimeError(f"Failed to load model from both SavedModel and H5 formats. Errors: {'; '.join(load_errors)}")
 
     if model is None:
-        raise RuntimeError(f"No model found at {SAVEDMODEL_DIR} or {MODEL_PATH}")
+        raise RuntimeError(f"No valid model found at {SAVEDMODEL_DIR} or {MODEL_PATH}. Errors: {'; '.join(load_errors)}")
 
-    # Verify model has expected attributes
-    if not hasattr(model, 'layers'):
-        raise AttributeError(f"Loaded model (type: {type(model)}) does not have 'layers' attribute. "
-                           "This may indicate a loading issue with the SavedModel format.")
-
-    if not hasattr(model, 'predict'):
-        raise AttributeError(f"Loaded model (type: {type(model)}) does not have 'predict' method.")
-
-    print(f"Model validation successful. Layers: {len(model.layers)}")
+    print(f"✓ Model loaded successfully with {len(model.layers)} layers")
     return model
 
 def find_last_conv_layer(model):
@@ -99,7 +118,7 @@ def find_last_conv_layer(model):
 
     for layer in reversed(model.layers):
         if isinstance(layer, layers.Conv2D):
-            print(f"Found last Conv2D layer: {layer.name}")
+            print(f"✓ Found last Conv2D layer: {layer.name}")
             return layer.name
 
     # If no Conv2D found, try to find it in nested models (like MobileNetV2)
@@ -107,14 +126,19 @@ def find_last_conv_layer(model):
         if hasattr(layer, 'layers'):
             for sublayer in reversed(layer.layers):
                 if isinstance(sublayer, layers.Conv2D):
-                    print(f"Found last Conv2D layer in nested model: {sublayer.name}")
+                    print(f"✓ Found last Conv2D layer in nested model: {sublayer.name}")
                     return sublayer.name
 
     raise ValueError("No Conv2D layer found in model. Grad-CAM requires a convolutional layer.")
 
 # Load and validate model
+print("=" * 60)
+print("INITIALIZING INSIGHT AI BACKEND")
+print("=" * 60)
 model = load_model_safe()
 last_conv_layer_name = find_last_conv_layer(model)
+print(f"✓ Grad-CAM configured for layer: {last_conv_layer_name}")
+print("=" * 60)
 
 # ----------------------------
 # Load BLIP model for captioning

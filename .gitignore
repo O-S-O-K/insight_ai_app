@@ -13,3 +13,7 @@ __pycache__/
 # editor / OS
 .vscode/
 .DS_Store
+
+# model backups
+models/*.backup
+models/*_backup/
