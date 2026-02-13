@@ -95,33 +95,23 @@ def load_model_safe():
     if model is None and MODEL_PATH.exists():
         print(f"Attempting to load H5 model from {MODEL_PATH}")
 
-        # Try multiple H5 loading strategies for compatibility
-        loading_strategies = [
-            ("Standard loading", lambda: tf.keras.models.load_model(str(MODEL_PATH), compile=False)),
-            ("Safe mode disabled", lambda: tf.keras.models.load_model(str(MODEL_PATH), compile=False, safe_mode=False)),
-        ]
+        try:
+            model = tf.keras.models.load_model(str(MODEL_PATH), compile=False)
+            print(f"  ✓ H5 model loaded successfully, type: {type(model)}")
 
-        for strategy_name, load_fn in loading_strategies:
-            try:
-                print(f"  Trying: {strategy_name}")
-                model = load_fn()
-                print(f"  ✓ H5 model loaded successfully with {strategy_name}, type: {type(model)}")
+            # Validate H5 model
+            if not hasattr(model, 'layers'):
+                raise AttributeError(f"H5 model (type: {type(model)}) does not have 'layers' attribute")
+            if not hasattr(model, 'predict'):
+                raise AttributeError(f"H5 model (type: {type(model)}) does not have 'predict' method")
 
-                # Validate H5 model
-                if not hasattr(model, 'layers'):
-                    raise AttributeError(f"H5 model (type: {type(model)}) does not have 'layers' attribute")
-                if not hasattr(model, 'predict'):
-                    raise AttributeError(f"H5 model (type: {type(model)}) does not have 'predict' method")
+            print(f"  ✓ H5 model validation successful")
 
-                print(f"  ✓ H5 model validation successful")
-                break  # Success, exit the loop
-
-            except Exception as e:
-                error_msg = f"{strategy_name} failed: {str(e)[:100]}"
-                print(f"  ✗ {error_msg}")
-                load_errors.append(error_msg)
-                model = None
-                continue
+        except Exception as e:
+            error_msg = f"H5 model loading failed: {str(e)[:100]}"
+            print(f"  ✗ {error_msg}")
+            load_errors.append(error_msg)
+            model = None
 
     # Try alternative H5 model files if primary failed
     if model is None:
@@ -131,7 +121,7 @@ def load_model_safe():
 
             print(f"Attempting to load alternative H5 model from {alt_path.name}")
             try:
-                model = tf.keras.models.load_model(str(alt_path), compile=False, safe_mode=False)
+                model = tf.keras.models.load_model(str(alt_path), compile=False)
                 print(f"  ✓ Alternative H5 model loaded successfully, type: {type(model)}")
 
                 # Validate
