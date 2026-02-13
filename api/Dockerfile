@@ -58,6 +58,15 @@ print('Model attributes validation OK')
 print(f'Model has {len(test_model.layers)} layers')
 PY
 
+# Download BLIP model at build time to cache it in the image
+RUN python - <<'PY'
+print('Downloading BLIP model to cache in Docker image...')
+from transformers import BlipProcessor, BlipForConditionalGeneration
+processor = BlipProcessor.from_pretrained("Salesforce/blip-image-captioning-base")
+model = BlipForConditionalGeneration.from_pretrained("Salesforce/blip-image-captioning-base")
+print('BLIP model downloaded and cached successfully')
+PY
+
 # Copy backend code and models
 COPY api/ ./api
 COPY models/ ./models
