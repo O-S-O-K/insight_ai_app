@@ -43,6 +43,14 @@ import matplotlib.cm as cm
 
 print("Step 5: Matplotlib loaded")
 
+# Import torch for BLIP model
+try:
+    import torch
+    print("Step 5a: PyTorch loaded")
+except ImportError:
+    torch = None
+    print("Step 5a: PyTorch not available (BLIP captions will not work)")
+
 from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.responses import JSONResponse
 
@@ -235,7 +243,9 @@ def load_models_background():
         # Load BLIP model
         print("Loading BLIP captioning model from cache...", flush=True)
         from transformers import BlipProcessor, BlipForConditionalGeneration
-        import torch
+
+        if torch is None:
+            raise ImportError("PyTorch is not available. Cannot load BLIP model.")
 
         blip_processor = BlipProcessor.from_pretrained("Salesforce/blip-image-captioning-base")
         print("✓ BLIP processor loaded", flush=True)
@@ -298,6 +308,18 @@ def health():
 # ----------------------------
 @app.post("/predict")
 async def predict(file: UploadFile = File(...)):
+    # Check if models are ready
+    if models_loading:
+        return JSONResponse(
+            status_code=503,
+            content={"error": "Models are still loading. Please wait and try again in a few moments."}
+        )
+    if not models_loaded or model is None:
+        return JSONResponse(
+            status_code=503,
+            content={"error": "Models failed to load. Please check server logs."}
+        )
+
     try:
         img = Image.open(file.file).convert("RGB").resize(IMG_SIZE)
         x = np.expand_dims(np.array(img), axis=0)
@@ -327,6 +349,18 @@ async def predict(file: UploadFile = File(...)):
 # ----------------------------
 @app.post("/caption")
 async def caption(file: UploadFile = File(...)):
+    # Check if models are ready
+    if models_loading:
+        return JSONResponse(
+            status_code=503,
+            content={"error": "Models are still loading. Please wait and try again in a few moments."}
+        )
+    if not models_loaded or blip_model is None or blip_processor is None:
+        return JSONResponse(
+            status_code=503,
+            content={"error": "BLIP model failed to load. Please check server logs."}
+        )
+
     try:
         img = Image.open(file.file).convert("RGB")
         inputs = blip_processor(images=img, return_tensors="pt").to(device)
@@ -346,6 +380,18 @@ async def caption(file: UploadFile = File(...)):
 # ----------------------------
 @app.post("/gradcam")
 async def gradcam(file: UploadFile = File(...), top_k: int = TOP_K):
+    # Check if models are ready
+    if models_loading:
+        return JSONResponse(
+            status_code=503,
+            content={"error": "Models are still loading. Please wait and try again in a few moments."}
+        )
+    if not models_loaded or model is None:
+        return JSONResponse(
+            status_code=503,
+            content={"error": "Models failed to load. Please check server logs."}
+        )
+
     try:
         img = Image.open(file.file).convert("RGB")
         img_resized = img.resize(IMG_SIZE)
