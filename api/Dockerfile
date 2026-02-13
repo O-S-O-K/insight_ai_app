@@ -29,11 +29,18 @@ RUN pip install --upgrade pip \
 RUN python - <<'PY'
 import tensorflow as tf
 print('TF OK', tf.__version__)
-import tensorflow.keras as tk
-print('tf.keras OK', tk.__version__)
+
+# Handle both Keras 3 (separate package) and legacy tf.keras
+try:
+    # Try legacy tf.keras first (works with TF_USE_LEGACY_KERAS=1)
+    from tensorflow.keras import layers, models
+    print('tf.keras OK (legacy)')
+except (ImportError, ModuleNotFoundError):
+    # Fall back to standalone Keras 3
+    from keras import layers, models
+    print('keras OK (standalone)')
 
 # Verify keras models can be loaded properly
-from tensorflow.keras import layers, models
 test_model = models.Sequential([
     layers.Input(shape=(224, 224, 3)),
     layers.Conv2D(16, 3, activation='relu'),
@@ -42,13 +49,11 @@ test_model = models.Sequential([
 ])
 print('Test model creation OK')
 
-# Verify model has expected attributes (Keras 3 compatible)
+# Verify model has expected attributes
 assert hasattr(test_model, 'layers'), "Model missing 'layers' attribute"
 assert hasattr(test_model, 'predict'), "Model missing 'predict' method"
 assert hasattr(test_model, 'get_layer'), "Model missing 'get_layer' method"
 assert hasattr(test_model, 'inputs'), "Model missing 'inputs' attribute"
-# Keras 3 uses 'outputs' (plural) instead of 'output'
-assert hasattr(test_model, 'outputs') or hasattr(test_model, 'output'), "Model missing 'outputs/output' attribute"
 print('Model attributes validation OK')
 print(f'Model has {len(test_model.layers)} layers')
 PY

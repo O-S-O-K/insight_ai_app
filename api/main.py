@@ -16,11 +16,20 @@ import numpy as np
 from PIL import Image
 import tensorflow as tf
 
-# Use tf.keras from the bundled TensorFlow version
-from tensorflow import keras
-from tensorflow.keras import layers
-from tensorflow.keras.models import Model
-from tensorflow.keras.applications.mobilenet_v2 import preprocess_input
+# Handle both Keras 3 (separate package) and legacy tf.keras
+try:
+    # Try legacy tf.keras first (works with TF_USE_LEGACY_KERAS=1)
+    from tensorflow import keras
+    from tensorflow.keras import layers
+    from tensorflow.keras.models import Model
+    from tensorflow.keras.applications.mobilenet_v2 import preprocess_input
+except (ImportError, ModuleNotFoundError, AttributeError):
+    # Fall back to standalone Keras 3
+    import keras
+    from keras import layers
+    from keras.models import Model
+    from keras.applications.mobilenet_v2 import preprocess_input
+
 import matplotlib.cm as cm
 
 from fastapi import FastAPI, UploadFile, File, Form
