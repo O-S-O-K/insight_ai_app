@@ -19,6 +19,7 @@ import tensorflow as tf
 # Use tf.keras from the bundled TensorFlow version
 from tensorflow import keras
 from tensorflow.keras import layers
+from tensorflow.keras.models import Model
 from tensorflow.keras.applications.mobilenet_v2 import preprocess_input
 import matplotlib.cm as cm
 

@@ -41,11 +41,6 @@ st.markdown(
     ```
     """
 )
-                    │
-                    └───────────↺ (influences future sessions)
-    ```
-    """
-)
 
 st.divider()
 

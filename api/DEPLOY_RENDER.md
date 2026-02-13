@@ -1,7 +1,8 @@
 Deploying the InsightAI backend to Render (free tier)
 
 1) Create a new Web Service on Render
-   - Connect your GitHub repo and pick the `api/` folder (use the Dockerfile-based service) or set "Build Command" to `pip install -r api/requirements.txt` and "Start Command" to `uvicorn main:app --host 0.0.0.0 --port $PORT`.
+   - Connect your GitHub repo and use the Dockerfile-based service (select api/Dockerfile).
+   - Alternatively, for a non-Docker deployment, set "Root Directory" to `api/`, "Build Command" to `pip install -r requirements.txt`, and "Start Command" to `uvicorn main:app --host 0.0.0.0 --port $PORT`.
 
 2) Set environment variables in Render:
    - `HF_TOKEN` — (required for BLIP captioning via Hugging Face Inference API)
