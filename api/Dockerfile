@@ -73,4 +73,4 @@ USER appuser
 EXPOSE 8000
 
 # Run FastAPI (honor Render's PORT if provided)
-CMD ["sh", "-c", "uvicorn api.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
+CMD ["sh", "-c", "echo 'Starting uvicorn...' && echo 'Working dir:' && pwd && echo 'Contents:' && ls -la && echo 'Python path:' && python -c 'import sys; print(sys.path)' && echo 'Starting app on port ${PORT:-8000}' && uvicorn api.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
