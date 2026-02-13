@@ -203,6 +203,8 @@ last_conv_layer_name = None
 blip_processor = None
 blip_model = None
 device = None
+models_loading = True
+models_loaded = False
 
 # ----------------------------
 # FastAPI app
@@ -210,16 +212,15 @@ device = None
 app = FastAPI(title="Insight AI API")
 
 # ----------------------------
-# Startup event - load models after uvicorn binds to port
+# Background task to load models (non-blocking)
 # ----------------------------
-@app.on_event("startup")
-async def startup_event():
-    """Load models when FastAPI starts up (after port binding)"""
-    global model, last_conv_layer_name, blip_processor, blip_model, device
+def load_models_background():
+    """Load models in background thread"""
+    global model, last_conv_layer_name, blip_processor, blip_model, device, models_loading, models_loaded
 
     try:
         print("=" * 60, flush=True)
-        print("INITIALIZING INSIGHT AI BACKEND", flush=True)
+        print("INITIALIZING INSIGHT AI BACKEND (background)", flush=True)
         print("=" * 60, flush=True)
 
         # Load CNN model
@@ -232,36 +233,49 @@ async def startup_event():
         print(f"✓ Grad-CAM configured for layer: {last_conv_layer_name}", flush=True)
 
         # Load BLIP model
-        print("Loading BLIP captioning model (this may take a while)...", flush=True)
+        print("Loading BLIP captioning model from cache...", flush=True)
         from transformers import BlipProcessor, BlipForConditionalGeneration
         import torch
 
-        print("Downloading BLIP processor...", flush=True)
         blip_processor = BlipProcessor.from_pretrained("Salesforce/blip-image-captioning-base")
         print("✓ BLIP processor loaded", flush=True)
 
-        print("Downloading BLIP model...", flush=True)
         blip_model = BlipForConditionalGeneration.from_pretrained("Salesforce/blip-image-captioning-base")
         print("✓ BLIP model loaded", flush=True)
 
         blip_model.eval()
         device = "cuda" if torch.cuda.is_available() else "cpu"
-        print(f"Moving BLIP model to device: {device}", flush=True)
         blip_model.to(device)
+        print(f"✓ BLIP model moved to device: {device}", flush=True)
+
+        models_loaded = True
+        models_loading = False
 
         print("=" * 60, flush=True)
         print("✓ ALL MODELS LOADED SUCCESSFULLY", flush=True)
         print("=" * 60, flush=True)
 
     except Exception as e:
+        models_loading = False
+        models_loaded = False
         print("=" * 60, flush=True)
-        print("❌ STARTUP ERROR:", flush=True)
+        print("❌ MODEL LOADING ERROR:", flush=True)
         print(str(e), flush=True)
         import traceback
         traceback.print_exc()
         print("=" * 60, flush=True)
-        # Don't raise - let the app start anyway so we can debug
-        print("⚠️  App starting without models loaded", flush=True)
+
+# ----------------------------
+# Startup event - launch background model loading
+# ----------------------------
+@app.on_event("startup")
+async def startup_event():
+    """Launch model loading in background (non-blocking)"""
+    import threading
+    print("Starting model loading in background thread...", flush=True)
+    thread = threading.Thread(target=load_models_background, daemon=True)
+    thread.start()
+    print("✓ Background model loading initiated - server ready for requests", flush=True)
 
 # ----------------------------
 # Health check
@@ -269,11 +283,12 @@ async def startup_event():
 @app.get("/")
 def health():
     return {
-        "status": "ok",
+        "status": "loading" if models_loading else ("ready" if models_loaded else "error"),
+        "models_loading": models_loading,
+        "models_loaded": models_loaded,
         "model_loaded": model is not None,
-        "model_type": str(type(model)),
-        "has_layers": hasattr(model, 'layers'),
-        "num_layers": len(model.layers) if hasattr(model, 'layers') else 0,
+        "blip_loaded": blip_model is not None,
+        "model_type": str(type(model)) if model else None,
         "gradcam_layer": last_conv_layer_name,
         "tensorflow_version": tf.__version__,
     }
