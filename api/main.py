@@ -7,14 +7,20 @@ import json
 import traceback
 import hashlib
 
+print("Step 1: Basic imports OK")
+
 # Force CPU execution and quieter TF logs in CPU-only environments
 os.environ.setdefault("CUDA_VISIBLE_DEVICES", "-1")
 os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
 os.environ.setdefault("TF_USE_LEGACY_KERAS", "1")
 
+print("Step 2: Environment variables set")
+
 import numpy as np
 from PIL import Image
 import tensorflow as tf
+
+print(f"Step 3: TensorFlow {tf.__version__} loaded")
 
 # Handle both Keras 3 (separate package) and legacy tf.keras
 try:
@@ -23,17 +29,24 @@ try:
     from tensorflow.keras import layers
     from tensorflow.keras.models import Model
     from tensorflow.keras.applications.mobilenet_v2 import preprocess_input
-except (ImportError, ModuleNotFoundError, AttributeError):
+    print("Step 4: Using tf.keras (legacy)")
+except (ImportError, ModuleNotFoundError, AttributeError) as e:
     # Fall back to standalone Keras 3
+    print(f"Step 4a: tf.keras failed ({e}), trying standalone keras")
     import keras
     from keras import layers
     from keras.models import Model
     from keras.applications.mobilenet_v2 import preprocess_input
+    print("Step 4b: Using standalone keras")
 
 import matplotlib.cm as cm
 
+print("Step 5: Matplotlib loaded")
+
 from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.responses import JSONResponse
+
+print("Step 6: FastAPI loaded")
 
 # ----------------------------
 # Path setup
