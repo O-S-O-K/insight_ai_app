@@ -14,6 +14,9 @@ os.environ.setdefault("CUDA_VISIBLE_DEVICES", "-1")
 os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
 os.environ.setdefault("TF_USE_LEGACY_KERAS", "1")
 
+# Memory optimization: Skip BLIP loading for low-memory environments (e.g., Render free tier)
+ENABLE_BLIP = os.environ.get("ENABLE_BLIP", "true").lower() == "true"
+
 print("Step 2: Environment variables set")
 
 import numpy as np
@@ -213,23 +216,26 @@ def load_models_background():
         last_conv_layer_name = find_last_conv_layer(model)
         print(f"✓ Grad-CAM configured for layer: {last_conv_layer_name}", flush=True)
 
-        # Load BLIP model
-        print("Loading BLIP captioning model from cache...", flush=True)
-        from transformers import BlipProcessor, BlipForConditionalGeneration
+        # Load BLIP model (only if enabled, to save memory)
+        if ENABLE_BLIP:
+            print("Loading BLIP captioning model from cache...", flush=True)
+            from transformers import BlipProcessor, BlipForConditionalGeneration
 
-        if torch is None:
-            raise ImportError("PyTorch is not available. Cannot load BLIP model.")
+            if torch is None:
+                raise ImportError("PyTorch is not available. Cannot load BLIP model.")
 
-        blip_processor = BlipProcessor.from_pretrained("Salesforce/blip-image-captioning-base")
-        print("✓ BLIP processor loaded", flush=True)
+            blip_processor = BlipProcessor.from_pretrained("Salesforce/blip-image-captioning-base")
+            print("✓ BLIP processor loaded", flush=True)
 
-        blip_model = BlipForConditionalGeneration.from_pretrained("Salesforce/blip-image-captioning-base")
-        print("✓ BLIP model loaded", flush=True)
+            blip_model = BlipForConditionalGeneration.from_pretrained("Salesforce/blip-image-captioning-base")
+            print("✓ BLIP model loaded", flush=True)
 
-        blip_model.eval()
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-        blip_model.to(device)
-        print(f"✓ BLIP model moved to device: {device}", flush=True)
+            blip_model.eval()
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+            blip_model.to(device)
+            print(f"✓ BLIP model moved to device: {device}", flush=True)
+        else:
+            print("⚠ BLIP captioning DISABLED (ENABLE_BLIP=false) - captions unavailable", flush=True)
 
         models_loaded = True
         models_loading = False
@@ -270,6 +276,7 @@ def health():
         "models_loading": models_loading,
         "models_loaded": models_loaded,
         "model_loaded": model is not None,
+        "blip_enabled": ENABLE_BLIP,
         "blip_loaded": blip_model is not None,
         "model_type": str(type(model)) if model else None,
         "gradcam_layer": last_conv_layer_name,
@@ -322,6 +329,13 @@ async def predict(file: UploadFile = File(...)):
 # ----------------------------
 @app.post("/caption")
 async def caption(file: UploadFile = File(...)):
+    # Check if BLIP is enabled
+    if not ENABLE_BLIP:
+        return JSONResponse(
+            status_code=503,
+            content={"error": "Image captioning is disabled on this deployment to save memory. Please enable ENABLE_BLIP environment variable or upgrade to a larger instance."}
+        )
+
     # Check if models are ready
     if models_loading:
         return JSONResponse(
