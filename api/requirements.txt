@@ -19,7 +19,6 @@ opencv-python-headless==4.8.1.78
 # ============================
 tensorflow-cpu==2.10.1
 h5py>=3.15,<4
-keras==2.10.1
 
 # ============================
 # BLIP / Transformers
