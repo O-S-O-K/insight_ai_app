@@ -25,14 +25,31 @@ COPY api/requirements.txt .
 RUN pip install --upgrade pip \
     && pip install --no-cache-dir -r requirements.txt
 
-# Fail fast if TensorFlow not importable
+# Fail fast if TensorFlow not importable and validate model loading
 RUN python - <<'PY'
 import tensorflow as tf
 print('TF OK', tf.__version__)
 import tensorflow.keras as tk
 print('tf.keras OK', tk.__version__)
-import keras
-print('keras pkg', keras.__version__)
+
+# Verify keras models can be loaded properly
+from tensorflow.keras import layers, models
+test_model = models.Sequential([
+    layers.Input(shape=(224, 224, 3)),
+    layers.Conv2D(16, 3, activation='relu'),
+    layers.GlobalAveragePooling2D(),
+    layers.Dense(3, activation='softmax')
+])
+print('Test model creation OK')
+
+# Verify model has expected attributes
+assert hasattr(test_model, 'layers'), "Model missing 'layers' attribute"
+assert hasattr(test_model, 'predict'), "Model missing 'predict' method"
+assert hasattr(test_model, 'get_layer'), "Model missing 'get_layer' method"
+assert hasattr(test_model, 'inputs'), "Model missing 'inputs' attribute"
+assert hasattr(test_model, 'output'), "Model missing 'output' attribute"
+print('Model attributes validation OK')
+print(f'Model has {len(test_model.layers)} layers')
 PY
 
 # Copy backend code and models

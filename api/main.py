@@ -52,19 +52,68 @@ else:
     LABEL_MAP = {}
 
 # ----------------------------
-# Load CNN model (prefer SavedModel to avoid H5 deserialization issues)
+# Load CNN model with proper error handling
 # ----------------------------
-if SAVEDMODEL_DIR.exists():
-    model = keras.models.load_model(SAVEDMODEL_DIR, compile=False)
-else:
-    model = keras.models.load_model(MODEL_PATH, compile=False)
+def load_model_safe():
+    """Load model with fallback mechanisms"""
+    model = None
+
+    # Try SavedModel format first
+    if SAVEDMODEL_DIR.exists():
+        try:
+            print(f"Loading SavedModel from {SAVEDMODEL_DIR}")
+            model = tf.keras.models.load_model(str(SAVEDMODEL_DIR), compile=False)
+            print(f"Model loaded successfully, type: {type(model)}")
+        except Exception as e:
+            print(f"SavedModel loading failed: {e}")
+            model = None
+
+    # Fallback to H5 format
+    if model is None and MODEL_PATH.exists():
+        try:
+            print(f"Loading H5 model from {MODEL_PATH}")
+            model = tf.keras.models.load_model(str(MODEL_PATH), compile=False)
+            print(f"Model loaded successfully, type: {type(model)}")
+        except Exception as e:
+            print(f"H5 model loading failed: {e}")
+            raise RuntimeError("Failed to load model from both SavedModel and H5 formats")
+
+    if model is None:
+        raise RuntimeError(f"No model found at {SAVEDMODEL_DIR} or {MODEL_PATH}")
+
+    # Verify model has expected attributes
+    if not hasattr(model, 'layers'):
+        raise AttributeError(f"Loaded model (type: {type(model)}) does not have 'layers' attribute. "
+                           "This may indicate a loading issue with the SavedModel format.")
+
+    if not hasattr(model, 'predict'):
+        raise AttributeError(f"Loaded model (type: {type(model)}) does not have 'predict' method.")
+
+    print(f"Model validation successful. Layers: {len(model.layers)}")
+    return model
 
 def find_last_conv_layer(model):
+    """Find the last Conv2D layer in the model for Grad-CAM"""
+    if not hasattr(model, 'layers'):
+        raise AttributeError(f"Model (type: {type(model)}) does not have 'layers' attribute")
+
     for layer in reversed(model.layers):
         if isinstance(layer, layers.Conv2D):
+            print(f"Found last Conv2D layer: {layer.name}")
             return layer.name
-    raise ValueError("No Conv2D layer found in model.")
 
+    # If no Conv2D found, try to find it in nested models (like MobileNetV2)
+    for layer in reversed(model.layers):
+        if hasattr(layer, 'layers'):
+            for sublayer in reversed(layer.layers):
+                if isinstance(sublayer, layers.Conv2D):
+                    print(f"Found last Conv2D layer in nested model: {sublayer.name}")
+                    return sublayer.name
+
+    raise ValueError("No Conv2D layer found in model. Grad-CAM requires a convolutional layer.")
+
+# Load and validate model
+model = load_model_safe()
 last_conv_layer_name = find_last_conv_layer(model)
 
 # ----------------------------
@@ -91,8 +140,12 @@ app = FastAPI(title="Insight AI API")
 def health():
     return {
         "status": "ok",
-        "model_loaded": True,
+        "model_loaded": model is not None,
+        "model_type": str(type(model)),
+        "has_layers": hasattr(model, 'layers'),
+        "num_layers": len(model.layers) if hasattr(model, 'layers') else 0,
         "gradcam_layer": last_conv_layer_name,
+        "tensorflow_version": tf.__version__,
     }
 
 # ----------------------------
@@ -154,8 +207,22 @@ async def gradcam(file: UploadFile = File(...), top_k: int = TOP_K):
         x = np.expand_dims(np.array(img_resized), axis=0)
         x = preprocess_input(x)
 
+        # Validate model has required attributes
+        if not hasattr(model, 'get_layer'):
+            raise AttributeError("Model does not have 'get_layer' method required for Grad-CAM")
+
+        if not hasattr(model, 'inputs'):
+            raise AttributeError("Model does not have 'inputs' attribute required for Grad-CAM")
+
+        if not hasattr(model, 'output'):
+            raise AttributeError("Model does not have 'output' attribute required for Grad-CAM")
+
         # Grad-CAM model
-        last_conv_layer = model.get_layer(last_conv_layer_name)
+        try:
+            last_conv_layer = model.get_layer(last_conv_layer_name)
+        except ValueError as e:
+            raise ValueError(f"Could not find layer '{last_conv_layer_name}' in model: {e}")
+
         grad_model = Model(inputs=model.inputs, outputs=[last_conv_layer.output, model.output])
 
         preds = model.predict(x)[0]
@@ -170,11 +237,16 @@ async def gradcam(file: UploadFile = File(...), top_k: int = TOP_K):
                 loss = predictions[:, idx]
 
             grads = tape.gradient(loss, conv_outputs)
+
+            if grads is None:
+                print(f"Warning: Gradient is None for class {idx}, skipping")
+                continue
+
             pooled_grads = tf.reduce_mean(grads, axis=(0,1,2))
             conv_outputs = conv_outputs[0]
             heatmap = conv_outputs @ pooled_grads[..., tf.newaxis]
             heatmap = tf.squeeze(heatmap)
-            heatmap = tf.maximum(heatmap, 0) / tf.reduce_max(heatmap)
+            heatmap = tf.maximum(heatmap, 0) / (tf.reduce_max(heatmap) + 1e-8)  # Add epsilon to avoid division by zero
             heatmap = heatmap.numpy()
 
             # Apply colormap
