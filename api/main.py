@@ -217,29 +217,51 @@ async def startup_event():
     """Load models when FastAPI starts up (after port binding)"""
     global model, last_conv_layer_name, blip_processor, blip_model, device
 
-    print("=" * 60)
-    print("INITIALIZING INSIGHT AI BACKEND")
-    print("=" * 60)
+    try:
+        print("=" * 60, flush=True)
+        print("INITIALIZING INSIGHT AI BACKEND", flush=True)
+        print("=" * 60, flush=True)
 
-    # Load CNN model
-    model = load_model_safe()
-    last_conv_layer_name = find_last_conv_layer(model)
-    print(f"✓ Grad-CAM configured for layer: {last_conv_layer_name}")
+        # Load CNN model
+        print("Loading CNN model...", flush=True)
+        model = load_model_safe()
+        print(f"CNN model loaded: {type(model)}", flush=True)
 
-    # Load BLIP model
-    print("Loading BLIP captioning model...")
-    from transformers import BlipProcessor, BlipForConditionalGeneration
-    import torch
+        print("Finding last Conv2D layer...", flush=True)
+        last_conv_layer_name = find_last_conv_layer(model)
+        print(f"✓ Grad-CAM configured for layer: {last_conv_layer_name}", flush=True)
 
-    blip_processor = BlipProcessor.from_pretrained("Salesforce/blip-image-captioning-base")
-    blip_model = BlipForConditionalGeneration.from_pretrained("Salesforce/blip-image-captioning-base")
-    blip_model.eval()
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    blip_model.to(device)
+        # Load BLIP model
+        print("Loading BLIP captioning model (this may take a while)...", flush=True)
+        from transformers import BlipProcessor, BlipForConditionalGeneration
+        import torch
 
-    print("=" * 60)
-    print("✓ ALL MODELS LOADED SUCCESSFULLY")
-    print("=" * 60)
+        print("Downloading BLIP processor...", flush=True)
+        blip_processor = BlipProcessor.from_pretrained("Salesforce/blip-image-captioning-base")
+        print("✓ BLIP processor loaded", flush=True)
+
+        print("Downloading BLIP model...", flush=True)
+        blip_model = BlipForConditionalGeneration.from_pretrained("Salesforce/blip-image-captioning-base")
+        print("✓ BLIP model loaded", flush=True)
+
+        blip_model.eval()
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        print(f"Moving BLIP model to device: {device}", flush=True)
+        blip_model.to(device)
+
+        print("=" * 60, flush=True)
+        print("✓ ALL MODELS LOADED SUCCESSFULLY", flush=True)
+        print("=" * 60, flush=True)
+
+    except Exception as e:
+        print("=" * 60, flush=True)
+        print("❌ STARTUP ERROR:", flush=True)
+        print(str(e), flush=True)
+        import traceback
+        traceback.print_exc()
+        print("=" * 60, flush=True)
+        # Don't raise - let the app start anyway so we can debug
+        print("⚠️  App starting without models loaded", flush=True)
 
 # ----------------------------
 # Health check
