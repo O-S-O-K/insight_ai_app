@@ -31,6 +31,8 @@ import tensorflow as tf
 print('TF OK', tf.__version__)
 import tensorflow.keras as tk
 print('tf.keras OK', tk.__version__)
+import keras
+print('keras pkg', keras.__version__)
 PY
 
 # Copy backend code and models

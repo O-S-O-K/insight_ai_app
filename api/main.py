@@ -34,6 +34,7 @@ FEEDBACK_DIR = ROOT / "feedback_images"
 FEEDBACK_DIR.mkdir(parents=True, exist_ok=True)
 
 MODEL_PATH = MODELS_DIR / "cnn_model.h5"
+SAVEDMODEL_DIR = MODELS_DIR / "cnn_baseline_savedmodel"
 METADATA_PATH = MODELS_DIR / "model_metadata.json"
 
 IMG_SIZE = (224, 224)
@@ -50,9 +51,12 @@ else:
     LABEL_MAP = {}
 
 # ----------------------------
-# Load CNN model
+# Load CNN model (prefer SavedModel to avoid H5 deserialization issues)
 # ----------------------------
-model = keras.models.load_model(MODEL_PATH)
+if SAVEDMODEL_DIR.exists():
+    model = keras.models.load_model(SAVEDMODEL_DIR, compile=False)
+else:
+    model = keras.models.load_model(MODEL_PATH, compile=False)
 
 def find_last_conv_layer(model):
     for layer in reversed(model.layers):
