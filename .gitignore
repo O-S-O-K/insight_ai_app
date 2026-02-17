@@ -1,0 +1,19 @@
+# environments
+.venv/
+venv/
+.env
+
+# python cache
+__pycache__/
+*.pyc
+
+# streamlit
+.streamlit/secrets.toml
+
+# editor / OS
+.vscode/
+.DS_Store
+
+# model backups
+models/*.backup
+models/*_backup/
