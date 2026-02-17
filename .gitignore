@@ -1,19 +1,48 @@
-# environments
+# Environments
 .venv/
 venv/
+env/
 .env
+.env.local
 
-# python cache
+# Python cache & build
 __pycache__/
 *.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.coverage
+.hypothesis/
+.mypy_cache/
+.tox/
 
-# streamlit
+# Streamlit
 .streamlit/secrets.toml
 
-# editor / OS
+# IDE / Editors
 .vscode/
-.DS_Store
+.idea/
+*.swp
+*.swo
+*~
 
-# model backups
+# OS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Model backups
 models/*.backup
 models/*_backup/
+
+# Temporary files
+tmpclaude-*-cwd
+*.log
+
+# Runtime data
+feedback_images/*.jpg
+feedback_images/*.jpeg
+feedback_images/*.png
+!feedback_images/.gitkeep
