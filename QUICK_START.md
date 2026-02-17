@@ -34,7 +34,9 @@ Should return:
 ### 4. Test Your App
 Go to: https://insight-ai-v1.streamlit.app
 
-Test features:
+**Note**: While the backend is down, the app will show a friendly maintenance page explaining the status.
+
+Test features once deployed:
 - ✅ **Predictions**: Should show specific breeds (e.g., "German Shepherd", not just "dog")
 - ✅ **Grad-CAM**: Should highlight correct regions
 - ❌ **Captions**: Will show disabled message (expected with free tier)
@@ -49,6 +51,7 @@ Test features:
 | Accurate Grad-CAM heatmaps | ✅ Working |
 | Human feedback | ✅ Working |
 | BLIP captions | ❌ Disabled (to fit in 512 MB) |
+| Maintenance page | ✅ Shows when backend is down |
 
 ---
 
