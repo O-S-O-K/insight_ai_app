@@ -285,9 +285,9 @@ with st.sidebar:
     # --- Recent Predictions (MLflow) ---
     col_r, col_b = st.columns([3, 1])
     with col_r:
-        st.subheader("Recent Predictions")
+        st.markdown("**Recent Predictions**")
     with col_b:
-        if st.button("Refresh", key="refresh_mlflow", use_container_width=True):
+        if st.button("Refresh", key="refresh_mlflow"):
             st.session_state.mlflow_runs = None
 
     if st.session_state.get("mlflow_runs") is None:
