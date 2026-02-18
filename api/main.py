@@ -88,7 +88,11 @@ print("Step 6: FastAPI loaded")
 # ----------------------------
 # Path setup
 # ----------------------------
-ROOT = Path(__file__).resolve().parents[1]
+# In HF Spaces the flat layout puts main.py at /app/main.py,
+# so parents[0] == /app. In the original project layout main.py
+# was at api/main.py and parents[1] was the project root.
+# Use parents[0] to stay within /app regardless of layout.
+ROOT = Path(__file__).resolve().parents[0]
 MODELS_DIR = ROOT / "models"
 FEEDBACK_DIR = ROOT / "feedback_images"
 FEEDBACK_DIR.mkdir(parents=True, exist_ok=True)
