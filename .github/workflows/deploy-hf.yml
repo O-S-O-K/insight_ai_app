@@ -17,6 +17,11 @@ jobs:
         with:
           lfs: true
 
+      - name: Install git-lfs
+        run: |
+          sudo apt-get install -y git-lfs
+          git lfs install --system
+
       - name: Push to Hugging Face Space
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
@@ -26,6 +31,19 @@ jobs:
 
           # Clone the HF Space repo
           git clone https://O-S-O-K:$HF_TOKEN@huggingface.co/spaces/O-S-O-K/insight-ai-backend hf-space
+
+          # Enable LFS in the HF Space repo
+          cd hf-space
+          git lfs install
+          git lfs track "*.h5"
+          git lfs track "*.npy"
+          git lfs track "*.pb"
+          git lfs track "*.data-*"
+          git lfs track "*.index"
+          git lfs track "*.safetensors"
+          git lfs track "*.bin"
+          git add .gitattributes
+          cd ..
 
           # Sync api/ contents into Space root
           cp api/main.py          hf-space/
