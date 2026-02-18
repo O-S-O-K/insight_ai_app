@@ -11,10 +11,14 @@
     "1": "Melanoma"
   },
   "class_descriptions": {
-    "0": "Benign skin lesion — no malignancy detected",
-    "1": "Melanoma — malignant skin lesion requiring clinical evaluation"
+    "0": "Benign skin lesion \u00e2\u20ac\u201d no malignancy detected",
+    "1": "Melanoma \u00e2\u20ac\u201d malignant skin lesion requiring clinical evaluation"
   },
-  "input_shape": [224, 224, 3],
+  "input_shape": [
+    224,
+    224,
+    3
+  ],
   "training": {
     "dataset": "ISIC 2020 Challenge",
     "dataset_url": "https://challenge2020.isic-archive.com/",
@@ -31,18 +35,17 @@
     ],
     "optimizer": "Adam",
     "learning_rate_phase1": 0.001,
-    "learning_rate_phase2": 0.00001,
+    "learning_rate_phase2": 1e-05,
     "epochs_phase1": 10,
     "epochs_phase2": 20,
     "batch_size": 32,
     "early_stopping_patience": 5
   },
   "performance": {
-    "note": "Placeholder metrics - update after training",
-    "val_accuracy": null,
-    "val_auc": null,
-    "val_sensitivity": null,
-    "val_specificity": null
+    "val_accuracy": 0,
+    "val_auc": 0,
+    "val_sensitivity": 0.0,
+    "val_specificity": 1.0
   },
   "disclaimer": "This model is for research and demonstration purposes only. It is NOT a certified medical device and must NOT be used for clinical diagnosis. Always consult a qualified dermatologist for skin lesion evaluation."
 }

@@ -93,7 +93,7 @@ def download_images_via_api(
     to_download = image_ids[:max_images]
     total = len(to_download)
 
-    print(f"  Downloading {total} images from ISIC Archive API...")
+    print(f"  Downloading {total} images from ISIC S3...")
 
     for i, image_id in enumerate(to_download):
         img_path = images_dir / f"{image_id}.jpg"
@@ -102,12 +102,9 @@ def download_images_via_api(
             continue
 
         try:
-            # Fetch image download URL from ISIC API
-            r = requests.get(
-                f"{ISIC_API}/{image_id}/thumbnail/",
-                params={"width": 224},
-                timeout=30,
-            )
+            # Direct S3 thumbnail URL (256px) — the /thumbnail/ API endpoint was removed
+            url = f"https://isic-archive.s3.amazonaws.com/thumbnails/{image_id}_thumbnail.jpg"
+            r = requests.get(url, timeout=30)
             if r.status_code == 200:
                 with open(img_path, "wb") as f:
                     f.write(r.content)
