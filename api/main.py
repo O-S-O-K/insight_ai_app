@@ -340,10 +340,11 @@ def load_models_background():
                 shap_background = np.load(str(SHAP_BACKGROUND_PATH))
                 print(f"✓ SHAP background loaded: {shap_background.shape}", flush=True)
             else:
-                # Generate random background samples for SHAP
-                # 10 samples keeps CPU inference under 60s on HF Spaces free tier
+                # Use black (zero) background — in MobileNetV2's [-1,1] normalized
+                # space, all-zeros is a neutral baseline that produces sharper,
+                # more localized SHAP attributions than random noise.
                 print("Generating SHAP background dataset (10 samples)...", flush=True)
-                shap_background = np.random.uniform(-1, 1, (10, 224, 224, 3)).astype(np.float32)
+                shap_background = np.zeros((10, 224, 224, 3), dtype=np.float32)
                 np.save(str(SHAP_BACKGROUND_PATH), shap_background)
                 print("✓ SHAP background generated and cached", flush=True)
             shap_explainer = shap.GradientExplainer(model, shap_background)
@@ -659,16 +660,22 @@ async def shap_explain(file: UploadFile = File(...), model_type: Optional[str] =
         # shap_values is a list with one entry (ranked_outputs=1)
         shap_img = shap_values[0][0]  # [H, W, C]
 
-        # Aggregate across channels and normalize
-        shap_agg = np.abs(shap_img).mean(axis=-1)  # [H, W]
-        shap_norm = (shap_agg - shap_agg.min()) / (shap_agg.max() - shap_agg.min() + 1e-8)
+        # Aggregate across channels — keep the sign so we can distinguish
+        # pixels that support (positive) vs. suppress (negative) the prediction.
+        shap_agg = shap_img.mean(axis=-1)  # [H, W]
 
-        # RdBu_r colormap: red = important regions, blue = suppressing regions
-        heatmap_colored = cm.RdBu_r(1 - shap_norm)[:, :, :3]
+        # Normalize symmetrically around 0: maps [-max, +max] → [0, 1]
+        # so that 0.5 = neutral, >0.5 = positive contribution, <0.5 = negative.
+        shap_max = np.abs(shap_agg).max() + 1e-8
+        shap_norm = (shap_agg / shap_max + 1.0) / 2.0
+
+        # RdBu colormap: 1.0 = red (supports prediction), 0.5 = white (neutral),
+        # 0.0 = blue (suppresses prediction).
+        heatmap_colored = cm.RdBu(shap_norm)[:, :, :3]
         heatmap_colored = np.uint8(255 * heatmap_colored)
         heatmap_img = Image.fromarray(heatmap_colored).resize(IMG_SIZE)
         original = img.resize(IMG_SIZE)
-        overlay = Image.blend(original, heatmap_img, alpha=0.5)
+        overlay = Image.blend(original, heatmap_img, alpha=0.65)
 
         buffer = io.BytesIO()
         overlay.save(buffer, format="PNG")
@@ -693,7 +700,7 @@ async def shap_explain(file: UploadFile = File(...), model_type: Optional[str] =
             "top_class": top_class_name,
             "top_class_idx": top_class_idx,
             "top_confidence": top_confidence,
-            "explanation": "Red regions contribute most to this prediction. Blue regions suppress it.",
+            "explanation": "Red regions support this prediction. Blue regions suppress it.",
             "method": "SHAP GradientExplainer",
         }
 
