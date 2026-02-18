@@ -1,4 +1,13 @@
-# InsightAI Backend API
+---
+title: Insight AI Backend
+emoji: 🔬
+colorFrom: blue
+colorTo: green
+sdk: docker
+pinned: false
+---
+
+# Insight AI Backend
 
 FastAPI backend service for InsightAI, handling heavy ML inference tasks including CNN predictions, Grad-CAM visualizations, and BLIP image captioning.
 

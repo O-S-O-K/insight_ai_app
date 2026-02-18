@@ -1,0 +1,45 @@
+name: Deploy Backend to HF Spaces
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "api/**"
+      - "models/**"
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Push to Hugging Face Space
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          git config --global user.email "github-actions@github.com"
+          git config --global user.name "GitHub Actions"
+
+          # Clone the HF Space repo
+          git clone https://O-S-O-K:$HF_TOKEN@huggingface.co/spaces/O-S-O-K/insight-ai-backend hf-space
+
+          # Sync api/ contents into Space root
+          cp api/main.py          hf-space/
+          cp api/requirements.txt hf-space/
+          cp api/Dockerfile       hf-space/
+          cp api/README.md        hf-space/
+          cp -r api/utils         hf-space/
+
+          # Sync models/
+          cp -r models            hf-space/
+
+          # Commit and push if anything changed
+          cd hf-space
+          git add -A
+          git diff --staged --quiet && echo "No changes to deploy" && exit 0
+          git commit -m "Deploy from insight_ai_app@${{ github.sha }}"
+          git push
