@@ -27,7 +27,7 @@ MLFLOW_EXPERIMENT_NAME = os.environ.get("MLFLOW_EXPERIMENT_NAME", "insight-ai-in
 print("Step 2: Feature flags set")
 
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageOps
 import tensorflow as tf
 
 print(f"Step 3: TensorFlow {tf.__version__} loaded")
@@ -152,6 +152,14 @@ def preprocess_image(img: Image.Image, model_type: str = "imagenet") -> np.ndarr
     # Both imagenet and medical models use MobileNetV2-style normalization [-1, 1]
     x = mobilenet_preprocess(x)
     return x
+
+def _open_image(file_obj) -> Image.Image:
+    """Open image, apply EXIF orientation, and convert to RGB.
+    Mobile cameras embed rotation in EXIF; PIL ignores it by default,
+    causing heatmap overlays to appear rotated vs. the displayed image.
+    """
+    img = Image.open(file_obj).convert("RGB")
+    return ImageOps.exif_transpose(img)
 
 # ----------------------------
 # Model loading
@@ -429,7 +437,7 @@ async def predict(file: UploadFile = File(...), model_type: Optional[str] = Form
         return err
 
     try:
-        img = Image.open(file.file).convert("RGB")
+        img = _open_image(file.file)
 
         # Resolve which model / config to use for this request
         requested = model_type or MODEL_TYPE
@@ -507,7 +515,7 @@ async def caption(file: UploadFile = File(...)):
         )
 
     try:
-        img = Image.open(file.file).convert("RGB")
+        img = _open_image(file.file)
         inputs = blip_processor(images=img, return_tensors="pt").to(device)
         with torch.no_grad():
             output_ids = blip_model.generate(**inputs)
@@ -530,7 +538,7 @@ async def gradcam(file: UploadFile = File(...), top_k: int = TOP_K, model_type: 
         return err
 
     try:
-        img = Image.open(file.file).convert("RGB")
+        img = _open_image(file.file)
         img_resized = img.resize(IMG_SIZE)
 
         # Resolve which model / config to use for this request
@@ -646,7 +654,7 @@ async def shap_explain(file: UploadFile = File(...), model_type: Optional[str] =
         )
 
     try:
-        img = Image.open(file.file).convert("RGB")
+        img = _open_image(file.file)
         x = preprocess_image(img, MODEL_TYPE)
 
         # Compute SHAP values for top predicted class only.
@@ -742,7 +750,7 @@ async def clip_classify(
                 content={"error": "Maximum 20 labels allowed per request."}
             )
 
-        img = Image.open(file.file).convert("RGB")
+        img = _open_image(file.file)
 
         clip_device = next(clip_model.parameters()).device
         inputs = clip_processor(
