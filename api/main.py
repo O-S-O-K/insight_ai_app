@@ -1,6 +1,7 @@
 # main.py
 import os
 from pathlib import Path
+from typing import Optional
 import io
 import base64
 import json
@@ -229,6 +230,10 @@ device = None
 models_loading = True
 models_loaded = False
 
+# Per-type model registry (populated at startup)
+_models: dict = {}        # {"imagenet": keras_model, "medical": keras_model}
+_model_configs: dict = {} # {"imagenet": {label_map, temperature, last_conv}, ...}
+
 # ----------------------------
 # FastAPI app + versioned router
 # ----------------------------
@@ -243,6 +248,7 @@ def load_models_background():
     global model, last_conv_layer_name, blip_processor, blip_model
     global clip_model, clip_processor, shap_background, shap_explainer
     global device, models_loading, models_loaded
+    global _models, _model_configs
 
     try:
         print("=" * 60, flush=True)
@@ -255,6 +261,34 @@ def load_models_background():
         model = load_model_safe()
         last_conv_layer_name = find_last_conv_layer(model)
         print(f"✓ Grad-CAM layer: {last_conv_layer_name}", flush=True)
+
+        # Register primary model in per-type dict
+        _models[MODEL_TYPE] = model
+        _model_configs[MODEL_TYPE] = {
+            "label_map": LABEL_MAP,
+            "temperature": TEMPERATURE,
+            "last_conv": last_conv_layer_name,
+        }
+
+        # Opportunistically load the secondary model (non-fatal if missing/broken)
+        secondary_type = "medical" if MODEL_TYPE == "imagenet" else "imagenet"
+        secondary_path = MEDICAL_MODEL_PATH if secondary_type == "medical" else MODEL_PATH
+        if secondary_path.exists() and secondary_type not in _models:
+            try:
+                print(f"Loading secondary ({secondary_type}) model...", flush=True)
+                sec_model = tf.keras.models.load_model(str(secondary_path), compile=False)
+                sec_meta_path = MEDICAL_METADATA_PATH if secondary_type == "medical" else METADATA_PATH
+                sec_meta = json.load(open(str(sec_meta_path))) if sec_meta_path.exists() else {}
+                sec_conv = find_last_conv_layer(sec_model)
+                _models[secondary_type] = sec_model
+                _model_configs[secondary_type] = {
+                    "label_map": sec_meta.get("classes", {}),
+                    "temperature": float(sec_meta.get("temperature", 1.0)),
+                    "last_conv": sec_conv,
+                }
+                print(f"✓ Secondary model loaded: {secondary_type} (layer: {sec_conv})", flush=True)
+            except Exception as sec_err:
+                print(f"⚠ Secondary model load failed (non-fatal): {sec_err}", flush=True)
 
         # Load BLIP captioning model
         if ENABLE_BLIP:
@@ -375,24 +409,33 @@ def health():
 # v1: Prediction endpoint
 # ----------------------------
 @router.post("/predict")
-async def predict(file: UploadFile = File(...)):
+async def predict(file: UploadFile = File(...), model_type: Optional[str] = Form(None)):
     err = _check_models_ready()
     if err:
         return err
 
     try:
         img = Image.open(file.file).convert("RGB")
-        x = preprocess_image(img, MODEL_TYPE)
+
+        # Resolve which model / config to use for this request
+        requested = model_type or MODEL_TYPE
+        m = _models.get(requested) or model
+        config = _model_configs.get(requested) or _model_configs.get(MODEL_TYPE, {})
+        label_map = config.get("label_map", LABEL_MAP)
+        temperature = config.get("temperature", TEMPERATURE)
+        effective_type = requested if requested in _models else MODEL_TYPE
+
+        x = preprocess_image(img, effective_type)
 
         # Use model() instead of model.predict() to get raw logits for calibration
-        raw_preds = model(x, training=False).numpy()[0]
-        calibrated_preds = apply_temperature_scaling(raw_preds, TEMPERATURE)
+        raw_preds = m(x, training=False).numpy()[0]
+        calibrated_preds = apply_temperature_scaling(raw_preds, temperature)
 
         top_indices = calibrated_preds.argsort()[-TOP_K:][::-1]
         top_predictions = [
             {
                 "class_idx": int(idx),
-                "class_name": LABEL_MAP.get(str(idx), f"Class {idx}"),
+                "class_name": label_map.get(str(idx), f"Class {idx}"),
                 "confidence": float(calibrated_preds[idx]),
                 "raw_confidence": float(raw_preds[idx]),
             }
@@ -406,9 +449,9 @@ async def predict(file: UploadFile = File(...)):
         if MLFLOW_AVAILABLE:
             try:
                 with mlflow.start_run(run_name="predict"):
-                    mlflow.log_param("model_type", MODEL_TYPE)
+                    mlflow.log_param("model_type", effective_type)
                     mlflow.log_param("top_k", TOP_K)
-                    mlflow.log_param("temperature", TEMPERATURE)
+                    mlflow.log_param("temperature", temperature)
                     mlflow.log_metric("top1_confidence", top1_conf)
                     mlflow.log_metric("active_learning_flag", int(active_learning_flag))
                     mlflow.set_tag("endpoint", "predict")
@@ -418,8 +461,8 @@ async def predict(file: UploadFile = File(...)):
 
         return {
             "predictions": top_predictions,
-            "calibrated": TEMPERATURE != 1.0,
-            "temperature": TEMPERATURE,
+            "calibrated": temperature != 1.0,
+            "temperature": temperature,
             "active_learning_flag": active_learning_flag,
             "low_confidence": active_learning_flag,
         }
@@ -467,7 +510,7 @@ async def caption(file: UploadFile = File(...)):
 # v1: Grad-CAM endpoint
 # ----------------------------
 @router.post("/gradcam")
-async def gradcam(file: UploadFile = File(...), top_k: int = TOP_K):
+async def gradcam(file: UploadFile = File(...), top_k: int = TOP_K, model_type: Optional[str] = Form(None)):
     err = _check_models_ready()
     if err:
         return err
@@ -475,22 +518,31 @@ async def gradcam(file: UploadFile = File(...), top_k: int = TOP_K):
     try:
         img = Image.open(file.file).convert("RGB")
         img_resized = img.resize(IMG_SIZE)
-        x = preprocess_image(img_resized, MODEL_TYPE)
 
-        if not all(hasattr(model, a) for a in ['get_layer', 'inputs', 'output']):
+        # Resolve which model / config to use for this request
+        requested = model_type or MODEL_TYPE
+        m = _models.get(requested) or model
+        config = _model_configs.get(requested) or _model_configs.get(MODEL_TYPE, {})
+        label_map = config.get("label_map", LABEL_MAP)
+        effective_type = requested if requested in _models else MODEL_TYPE
+        conv_layer_name = config.get("last_conv", last_conv_layer_name)
+
+        x = preprocess_image(img_resized, effective_type)
+
+        if not all(hasattr(m, a) for a in ['get_layer', 'inputs', 'output']):
             raise AttributeError("Model missing attributes required for Grad-CAM")
 
         # Build grad model, handling nested layers (MobileNetV2 inside custom model)
         try:
-            last_conv_layer = model.get_layer(last_conv_layer_name)
-            grad_model = Model(inputs=model.inputs, outputs=[last_conv_layer.output, model.output])
+            last_conv_layer = m.get_layer(conv_layer_name)
+            grad_model = Model(inputs=m.inputs, outputs=[last_conv_layer.output, m.output])
         except ValueError:
             parent_model = None
             parent_idx = None
-            for i, layer in enumerate(model.layers):
+            for i, layer in enumerate(m.layers):
                 if hasattr(layer, 'layers'):
                     try:
-                        _ = layer.get_layer(last_conv_layer_name)
+                        _ = layer.get_layer(conv_layer_name)
                         parent_model = layer
                         parent_idx = i
                         break
@@ -498,21 +550,21 @@ async def gradcam(file: UploadFile = File(...), top_k: int = TOP_K):
                         continue
 
             if parent_model is None:
-                raise ValueError(f"Could not find layer '{last_conv_layer_name}'")
+                raise ValueError(f"Could not find layer '{conv_layer_name}'")
 
-            nested_conv_layer = parent_model.get_layer(last_conv_layer_name)
+            nested_conv_layer = parent_model.get_layer(conv_layer_name)
             parent_with_conv = Model(
                 inputs=parent_model.input,
                 outputs=[nested_conv_layer.output, parent_model.output]
             )
-            x_in = model.inputs[0]
+            x_in = m.inputs[0]
             conv_output, parent_output = parent_with_conv(x_in)
             final_output = parent_output
-            for layer in model.layers[parent_idx + 1:]:
+            for layer in m.layers[parent_idx + 1:]:
                 final_output = layer(final_output)
-            grad_model = Model(inputs=model.inputs, outputs=[conv_output, final_output])
+            grad_model = Model(inputs=m.inputs, outputs=[conv_output, final_output])
 
-        preds = model.predict(x)[0]
+        preds = m.predict(x)[0]
         top_indices = preds.argsort()[-top_k:][::-1]
         gradcam_results = []
 
@@ -542,7 +594,7 @@ async def gradcam(file: UploadFile = File(...), top_k: int = TOP_K):
 
             gradcam_results.append({
                 "class_idx": int(idx),
-                "class_name": LABEL_MAP.get(str(idx), f"Class {idx}"),
+                "class_name": label_map.get(str(idx), f"Class {idx}"),
                 "confidence": float(preds[idx]),
                 "heatmap_base64": f"data:image/png;base64,{overlay_b64}"
             })
@@ -559,7 +611,7 @@ async def gradcam(file: UploadFile = File(...), top_k: int = TOP_K):
 # v1: SHAP endpoint
 # ----------------------------
 @router.post("/shap")
-async def shap_explain(file: UploadFile = File(...)):
+async def shap_explain(file: UploadFile = File(...), model_type: Optional[str] = Form(None)):
     if not ENABLE_SHAP:
         return JSONResponse(
             status_code=503,

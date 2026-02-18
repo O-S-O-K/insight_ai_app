@@ -39,20 +39,24 @@ def _handle_response(response):
 # ----------------------------
 # Prediction (with calibration)
 # ----------------------------
-def predict_image(file_obj, top_k: int = 3):
+def predict_image(file_obj, top_k: int = 3, model_type: str = None):
     """Return top-K calibrated predictions from backend."""
     files = {"file": _file_tuple(file_obj)}
     data = {"top_k": str(top_k)}
+    if model_type:
+        data["model_type"] = model_type
     r = requests.post(_v1_url("/predict"), files=files, data=data, timeout=60)
     return _handle_response(r)
 
 # ----------------------------
 # Grad-CAM
 # ----------------------------
-def gradcam_image(file_obj, top_k: int = 3):
+def gradcam_image(file_obj, top_k: int = 3, model_type: str = None):
     """Return Grad-CAM overlays for top-K predictions."""
     files = {"file": _file_tuple(file_obj)}
     data = {"top_k": str(top_k)}
+    if model_type:
+        data["model_type"] = model_type
     r = requests.post(_v1_url("/gradcam"), files=files, data=data, timeout=60)
     return _handle_response(r)
 
@@ -68,10 +72,13 @@ def caption_image(file_obj):
 # ----------------------------
 # SHAP explainability
 # ----------------------------
-def shap_explain(file_obj):
+def shap_explain(file_obj, model_type: str = None):
     """Return SHAP GradientExplainer attribution map."""
     files = {"file": _file_tuple(file_obj)}
-    r = requests.post(_v1_url("/shap"), files=files, timeout=180)
+    data = {}
+    if model_type:
+        data["model_type"] = model_type
+    r = requests.post(_v1_url("/shap"), files=files, data=data or None, timeout=180)
     return _handle_response(r)
 
 # ----------------------------

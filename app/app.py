@@ -263,19 +263,29 @@ with st.sidebar:
     if TEMPERATURE != 1.0:
         st.caption(f"Temperature scaling: T={TEMPERATURE}")
 
-    if not _medical_available and USE_MOCK is False:
-        st.caption("Medical model: not deployed")
-
-    st.caption(
-        "To switch models, update `MODEL_TYPE` in the backend environment variables.",
-        help="Set MODEL_TYPE=medical or MODEL_TYPE=imagenet on the HF Space and redeploy.",
+    # --- Functional model selector ---
+    _model_options = {
+        "imagenet": "ImageNet General (MobileNetV2)",
+        "medical": "Medical Imaging (EfficientNetB0)",
+    }
+    _default_idx = 1 if _backend_model_type == "medical" else 0
+    st.selectbox(
+        "Active model",
+        options=list(_model_options.keys()),
+        format_func=lambda k: _model_options[k],
+        index=_default_idx,
+        key="selected_model",
+        help="Selects which model the backend uses for Predict and Grad-CAM.",
     )
+    if st.session_state.get("selected_model") == "medical" and not _medical_available and not USE_MOCK:
+        st.warning("Medical model not deployed on backend — will fall back to ImageNet.")
 
     st.divider()
 
     # --- Recent Predictions (MLflow) ---
-    st.subheader("Recent Predictions")
     col_r, col_b = st.columns([3, 1])
+    with col_r:
+        st.subheader("Recent Predictions")
     with col_b:
         if st.button("Refresh", key="refresh_mlflow", use_container_width=True):
             st.session_state.mlflow_runs = None
@@ -366,7 +376,11 @@ if uploaded_file:
         # Run predict and caption as sequential calls (caption is fast)
         with st.spinner("Running predictions..."):
             try:
-                result = call_backend_predict(uploaded_file, top_k=TOP_K)
+                result = call_backend_predict(
+                    uploaded_file,
+                    top_k=TOP_K,
+                    model_type=st.session_state.get("selected_model", _backend_model_type),
+                )
                 preds = result.get("predictions", [])
                 st.session_state.predictions = preds
                 st.session_state.predict_meta = {
@@ -437,7 +451,11 @@ if uploaded_file:
             if st.button("Grad-CAM", use_container_width=True):
                 with st.spinner("Computing Grad-CAM heatmaps..."):
                     try:
-                        result = call_backend_gradcam(uploaded_file, top_k=TOP_K)
+                        result = call_backend_gradcam(
+                            uploaded_file,
+                            top_k=TOP_K,
+                            model_type=st.session_state.get("selected_model", _backend_model_type),
+                        )
                         st.session_state.gradcams = result.get("gradcams", [])
                     except Exception as e:
                         st.error(f"Grad-CAM failed: {e}")
@@ -446,7 +464,10 @@ if uploaded_file:
             if st.button("SHAP  (may take ~1 min)", use_container_width=True):
                 with st.spinner("Computing SHAP attributions — this may take 1–2 minutes on free-tier CPU..."):
                     try:
-                        result = shap_explain(uploaded_file)
+                        result = shap_explain(
+                            uploaded_file,
+                            model_type=st.session_state.get("selected_model", _backend_model_type),
+                        )
                         st.session_state.shap_result = result
                     except Exception as e:
                         st.error(f"SHAP failed: {e}")

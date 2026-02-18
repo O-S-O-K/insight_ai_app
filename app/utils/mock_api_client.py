@@ -6,7 +6,7 @@ import random
 # Mock API functions
 # -----------------------
 
-def predict_image(uploaded_file, top_k: int = 3):
+def predict_image(uploaded_file, top_k: int = 3, model_type: str = None):
     return {
         "predictions": [
             {"class_idx": 0, "class_name": "cat", "confidence": 0.92},
@@ -20,7 +20,7 @@ def predict_image(uploaded_file, top_k: int = 3):
 def caption_image(uploaded_file):
     return {"caption": "A cute animal in a photo."}
 
-def gradcam_image(uploaded_file, top_k: int = 3):
+def gradcam_image(uploaded_file, top_k: int = 3, model_type: str = None):
     return {
         "gradcams": [
             {"class_idx": 0, "class_name": "cat", "confidence": 0.92, "heatmap_base64": "data:image/png;base64,"},
@@ -36,7 +36,7 @@ def submit_feedback(uploaded_file, entry):
 # ----------------------------
 # SHAP Explainability (mock)
 # ----------------------------
-def shap_explain(file_obj):
+def shap_explain(file_obj, model_type: str = None):
     """Mock SHAP GradientExplainer attribution map."""
     return {
         "shap_plot_base64": "data:image/png;base64,",
