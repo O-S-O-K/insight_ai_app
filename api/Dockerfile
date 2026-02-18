@@ -21,7 +21,9 @@ RUN useradd -m appuser
 WORKDIR /app
 
 # Copy backend requirements and install
-COPY api/requirements.txt .
+# NOTE: In HF Spaces the Dockerfile is at repo root, so paths are flat.
+# requirements.txt, main.py, utils/, models/ are all at root level.
+COPY requirements.txt .
 RUN pip install --upgrade pip \
     && pip install --no-cache-dir -r requirements.txt
 
@@ -67,8 +69,9 @@ model = BlipForConditionalGeneration.from_pretrained("Salesforce/blip-image-capt
 print('BLIP model downloaded and cached successfully')
 PY
 
-# Copy backend code and models
-COPY api/ ./api
+# Copy backend code and models (flat layout — HF Space root)
+COPY main.py .
+COPY utils/ ./utils
 COPY models/ ./models
 
 # Prepare writable data directories
@@ -82,5 +85,5 @@ USER appuser
 # HF Spaces uses 7860; Render provides $PORT
 EXPOSE 7860
 
-# Run FastAPI (HF Spaces default 7860, Render provides $PORT)
-CMD ["sh", "-c", "echo 'Starting uvicorn...' && echo 'Working dir:' && pwd && echo 'Contents:' && ls -la && echo 'Starting app on port ${PORT:-7860}' && uvicorn api.main:app --host 0.0.0.0 --port ${PORT:-7860}"]
+# Run FastAPI — module is main:app (flat layout, no api/ prefix)
+CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT:-7860}"]
