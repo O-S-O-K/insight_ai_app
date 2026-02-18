@@ -6,6 +6,7 @@ on:
     paths:
       - "api/**"
       - "models/**"
+  workflow_dispatch:
 
 jobs:
   deploy:
