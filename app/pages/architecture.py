@@ -2,193 +2,200 @@ import streamlit as st
 
 st.set_page_config(page_title="Architecture · Insight AI", layout="centered")
 
-st.title("🏗️ Architecture Overview")
-st.caption("How data flows through Insight AI: frontend (Streamlit) and backend (FastAPI) from image upload to human-readable insight, with a feedback loop.")
+st.title("Architecture Overview")
+st.caption("How data flows through Insight AI — from image upload to human-readable explanation, with MLops tracking and a human feedback loop.")
+
 st.markdown(
     """
     ```text
-    User Image Upload
-        │
-        ▼
-    Image Preprocessing
-    (resize, normalize)
-        │
-        ├───────────────┐
-        ▼               ▼
-    CNN Prediction     BLIP Captioning
-    (classification)   (vision → language)
-        │               │
-        ▼               ▼
-    Grad-CAM Heatmap   Natural Language Caption
-        │               │
-        └───────┬───────┘
-            ▼
-        Insight Mapping Layer
-    (keywords + model outputs)
-            │
-            ▼
-    Final User-Facing Explanation
-            │
-            ▼
-        User Feedback Collection
-    (prediction + caption validation)
-            │
-            ▼
-    Dynamic Mapping & Feedback Log
-      (JSON + CSV, session-aware)
-            │
-            └───────────────↺ (influences future sessions)
+    ┌─────────────────────────────────────────────────────────────┐
+    │                    Streamlit Frontend                       │
+    │              (Streamlit Cloud · free tier)                  │
+    └───────────────────────┬─────────────────────────────────────┘
+                            │  REST API  (multipart/form-data)
+                            ▼
+    ┌─────────────────────────────────────────────────────────────┐
+    │                   FastAPI Backend  /api/v1                  │
+    │          (Hugging Face Spaces · Docker · port 7860)         │
+    │                                                             │
+    │  User Image ──▶ Preprocessing (resize 224×224, normalize)  │
+    │                        │                                    │
+    │         ┌──────────────┼──────────────┬──────────────┐     │
+    │         ▼              ▼              ▼              ▼     │
+    │    CNN Predict    Grad-CAM        SHAP Explainer   BLIP    │
+    │   (MobileNetV2    (heatmap        (GradientExpl.  Caption  │
+    │    or EfficientB0  overlay)        ranked_outputs=1)       │
+    │    + calibration)                                          │
+    │         │              │              │              │     │
+    │         └──────────────┴──────────────┴──────────────┘     │
+    │                        │                                    │
+    │              CLIP Zero-Shot (optional)                      │
+    │        (ViT-B/32 · user-defined text labels)               │
+    │                        │                                    │
+    │              MLflow Experiment Logging                      │
+    │          (params, metrics, tags per request)               │
+    │                        │                                    │
+    │              Active Learning Flagging                       │
+    │          (auto-flag if confidence < 0.5)                   │
+    │                        │                                    │
+    └────────────────────────┼────────────────────────────────────┘
+                             │
+                             ▼
+                    User Feedback Form
+               (rating, correction, flag)
+                             │
+                             ▼
+                  feedback_log.json  ↺
+           (persisted · influences future sessions)
     ```
     """
 )
 
 st.divider()
 
-st.subheader("🧩 Component Breakdown")
+st.subheader("Component Breakdown")
 
-with st.expander("1️⃣ Image Preprocessing", expanded=True):
+with st.expander("1  Image Preprocessing", expanded=True):
     st.markdown(
         """
-        - Handles image loading and format conversion (PIL)
-        - Resizes images to match CNN input requirements
-        - Normalizes pixel values for stable inference
-        - Shared across prediction, Grad-CAM, and captioning pipelines
+        - Uploaded images are decoded and converted to RGB (PIL)
+        - Resized to 224×224 to match CNN input requirements
+        - Normalized per model type: MobileNetV2 uses `preprocess_input` (scale to [-1, 1]),
+          EfficientNetB0 expects [0, 255] (normalization internal to the model)
+        - Shared preprocessing pipeline across predict, Grad-CAM, SHAP, and CLIP endpoints
         """
     )
 
-with st.expander("2️⃣ CNN Prediction", expanded=False):
+with st.expander("2  CNN Prediction + Confidence Calibration", expanded=False):
     st.markdown(
         """
-        - A trained convolutional neural network produces class probabilities
-        - Designed for fast, CPU-compatible inference with TensorFlow 2.15.0
-        - Returns top-K predictions with confidence scores
-        - **tf-keras integration**: Legacy Keras 2 API compatibility layer
-        - **Robust model loading**: Automatic fallback from SavedModel to H5 format
-        - **Validation**: Checks model attributes before accepting loaded model
-        - **Background loading**: Models load in separate thread without blocking startup
+        - **ImageNet model**: MobileNetV2 pretrained on ImageNet-1K (1000 classes, ~71.8% top-1)
+        - **Medical model**: EfficientNetB0 fine-tuned on ISIC 2020 skin lesion dataset (binary: benign/melanoma)
+        - Model selected via `MODEL_TYPE` environment variable (`imagenet` or `medical`)
+        - **Temperature scaling**: raw logits divided by T=1.5 (imagenet) or T=1.2 (medical)
+          before softmax — reduces overconfidence typical of pre-trained networks
+        - Returns top-K predictions with calibrated confidence scores
+        - Background loading in a separate thread — server accepts requests immediately at startup
         """
     )
 
-with st.expander("3️⃣ Grad-CAM Explainability", expanded=False):
+with st.expander("3  Grad-CAM Explainability", expanded=False):
     st.markdown(
         """
-        - Uses gradient-weighted class activation mapping (Grad-CAM)
-        - Highlights image regions most influential to the model's decision
-        - Provides a visual justification alongside numeric predictions
-        - **Safety features**: Gradient validation and division-by-zero protection
-        - **Error handling**: Validates model attributes before computation
+        - Gradient-weighted Class Activation Mapping (Grad-CAM) highlights regions that
+          most influenced the predicted class
+        - Hooks into the last convolutional layer (`Conv_1` for MobileNetV2)
+        - Produces a heatmap overlaid on the original image at 0.4 alpha blend
+        - Supports top-K classes — returns one heatmap per predicted class
+        - Gradient validation and division-by-zero protection prevent silent failures
         """
     )
 
-with st.expander("4️⃣ BLIP Captioning (Vision → Language)", expanded=False):
+with st.expander("4  SHAP GradientExplainer", expanded=False):
     st.markdown(
         """
-        - Leverages a pretrained BLIP vision–language model
-        - Converts visual content into natural-language descriptions
-        - **Build-time caching**: BLIP model (~1GB) cached in Docker image for fast startup
-        - **Background loading**: Models load in background thread without blocking server startup
-        - Compatible with PyTorch 2.1.2 and Transformers 4.35.2
+        - Uses `shap.GradientExplainer` — best compatibility with TensorFlow/Keras functional models
+        - Background dataset: 10 random samples (224×224×3), generated once and cached as
+          `models/shap_background.npy` on first startup
+        - `ranked_outputs=1` limits computation to the top-1 predicted class only,
+          reducing gradient passes from 1000 → 1 (~1000× speedup on CPU)
+        - Output: signed feature attribution map (RdBu_r colormap) blended with original image
+        - Red regions = pixels that pushed toward the predicted class
+        - Blue regions = pixels that suppressed the predicted class
         """
     )
 
-with st.expander("5️⃣ Insight Mapping Layer", expanded=False):
+with st.expander("5  BLIP Captioning (Vision → Language)", expanded=False):
     st.markdown(
         """
-        - Maps BLIP-generated captions to domain-relevant keywords
-        - Combines visual evidence and linguistic cues
-        - Produces explanations tailored for non-technical users
+        - `Salesforce/blip-image-captioning-base` loaded via HuggingFace Transformers
+        - Generates a free-form natural-language description of the image content
+        - Model (~1GB) downloaded and cached in the Docker image at build time for fast startup
+        - Compatible with PyTorch 2.1.2 + Transformers 4.35.2
+        - Optional — disabled gracefully if `ENABLE_BLIP=false`
+        """
+    )
+
+with st.expander("6  CLIP Zero-Shot Classification", expanded=False):
+    st.markdown(
+        """
+        - `openai/clip-vit-base-patch32` via HuggingFace Transformers
+        - Encodes the image and a user-supplied list of text labels into a shared embedding space
+        - Returns cosine similarity scores for each label — no training required
+        - Works on any concept the user can describe in text
+        - Scores are relative (softmax over provided labels), not absolute probabilities
+        """
+    )
+
+with st.expander("7  MLflow Experiment Tracking", expanded=False):
+    st.markdown(
+        """
+        - Local file-based tracking (`file:./mlruns`) — no external server required
+        - Every `/predict`, `/shap`, `/clip` call is logged as a named MLflow run
+        - Logged per request: model type, top-1 class, confidence, temperature, endpoint name
+        - `/api/v1/mlflow/recent-runs` exposes the last N runs for the frontend sidebar
+        - Runs are ephemeral on HF Spaces (container restarts reset them) — acceptable for demo
+        """
+    )
+
+with st.expander("8  Active Learning & Feedback Loop", expanded=False):
+    st.markdown(
+        """
+        - Predictions with top-1 confidence < 0.5 are automatically flagged in the UI
+        - Users can manually flag any prediction via checkbox
+        - Feedback entries include: rating (1–5), correction text, `active_learning_flag`,
+          `flag_reason` (low_confidence | user_flagged), and `top1_confidence`
+        - All entries appended to `feedback_log.json` with timestamped image saves
+        - `/api/v1/active-learning/summary` returns total flags and flag rate
         """
     )
 
 st.divider()
 
-st.subheader("⚙️ Design Principles")
+st.subheader("Design Principles")
 
 st.markdown(
     """
-    - **Explainability-first:** predictions are always paired with explanations
-    - **Modularity:** each component can be updated independently
-    - **Production-aware:** lazy loading, caching, and CPU-safe inference
-    - **Human-centered:** outputs are designed to be interpretable, not just accurate
-    - **Deployment resilience:** Automatic fallbacks and comprehensive error handling
-    - **Observable:** Health endpoints and logging for monitoring model status
+    - **Explainability-first** — every prediction is paired with at least one explanation method
+    - **Modularity** — each component (SHAP, CLIP, MLflow, medical model) is independently toggled via env vars
+    - **Production-aware** — non-blocking startup, Docker containerization, CI/CD via GitHub Actions
+    - **Responsible AI** — model card documenting bias, limitations, and out-of-scope uses
+    - **Observable** — health endpoint exposes real-time model loading status per component
+    - **Human-centered** — outputs designed to be interpretable, not just accurate
     """
 )
 
 st.divider()
 
-st.subheader("🔧 Backend/Frontend Split")
+st.subheader("Deployment Architecture")
 
 st.markdown(
     """
-    **Frontend (Streamlit):**
-    - Lightweight web UI
-    - Image upload and display
-    - API client for backend communication
-    - Session state management
-    - User feedback forms
-    - Deployed on Streamlit Cloud (free tier)
+    **Frontend — Streamlit Cloud**
+    - Lightweight Streamlit UI (no ML dependencies)
+    - Calls backend via `INSIGHT_BACKEND_URL` secret
+    - Falls back to mock API client if backend is unreachable
+    - `app/requirements.txt`: streamlit, requests, pillow only
 
-    **Backend (FastAPI):**
-    - Heavy ML inference (TensorFlow 2.15.0, PyTorch 2.1.2)
-    - CNN predictions with MobileNetV2
-    - Grad-CAM heatmap generation
-    - BLIP image captioning (Transformers 4.35.2)
-    - Background model loading for non-blocking startup
-    - tf-keras 2.15.1 for legacy Keras 2 API compatibility
-    - Feedback storage (JSON/CSV)
-    - Deployed on Render.com (Docker container)
+    **Backend — Hugging Face Spaces (Docker)**
+    - FastAPI + Uvicorn on port 7860
+    - All ML models loaded at container startup in a background thread
+    - `api/requirements.txt`: TensorFlow, PyTorch, Transformers, SHAP, MLflow
+    - BLIP model baked into Docker image at build time (~1GB)
 
-    **Communication:**
-    - REST API with multipart form data
-    - Base64-encoded image responses for heatmaps
-    - JSON for structured data (predictions, captions, feedback)
-    - Health endpoint for deployment verification
+    **CI/CD — GitHub Actions**
+    - Trigger: push to `main` touching `api/**` or `models/**`, or manual `workflow_dispatch`
+    - Clones HF Space repo, syncs files, configures Git LFS for binary models, pushes
+    - HF Spaces detects the push and rebuilds the Docker image automatically
 
-    **Benefits:**
-    - Separation of concerns (UI vs. compute)
-    - Independent scaling and deployment
-    - Cost-effective free-tier hosting
-    - Easy to swap backends or frontends
+    **API versioning**
+    - All endpoints under `/api/v1/` prefix
+    - Health check at root `/` (unversioned)
     """
 )
 
 st.divider()
 
-st.subheader("📈 Why This Architecture Matters")
-
-st.markdown(
-    """
-    This architecture demonstrates how modern ML systems can move beyond black-box predictions.
-    By combining **visual explanations** and **language-based reasoning**, Insight AI provides
-    a multi-modal explanation pipeline suitable for real-world decision support systems.
-
-    **Production-Ready Features:**
-    - ✅ **Non-blocking model loading**: Background threading for instant server response
-    - ✅ **BLIP caching**: ~1GB model cached at build time for fast startup
-    - ✅ **TensorFlow 2.15.0**: Upgraded with tf-keras for legacy Keras 2 support
-    - ✅ **Model regeneration**: All models regenerated for compatibility
-    - ✅ **Health status API**: Real-time endpoint showing loading states (loading/ready/error)
-    - ✅ **Robust model loading**: Automatic SavedModel to H5 fallback with validation
-    - ✅ **Version compatibility**: Pinned transformers 4.35.2 for PyTorch 2.1.2
-    - ✅ **Comprehensive error handling**: Validation and defensive checks throughout
-    - ✅ **Separate frontend/backend**: Independent scaling and deployment
-    - ✅ **Docker containerization**: Consistent deployment across environments
-    - ✅ **Build-time validation**: Catch compatibility issues before deployment
-    - ✅ **Deployment success**: 100% uptime on Render with zero-downtime updates
-
-    **Best Practices Demonstrated:**
-    - Explainable AI (XAI) integration at architecture level
-    - Frontend/backend separation for scalability
-    - Defensive programming with validation and fallbacks
-    - Infrastructure as code (Docker, docker-compose)
-    - API-first design for flexibility
-    - Observable systems with health checks and logging
-    """
-)
-
-st.divider()
-
+st.caption("Author: Sheron Schley · github.com/O-S-O-K/insight_ai_app")
 st.caption("© Insight AI · Architecture Diagram & Design")
-st.caption("🌐 Live Demo: https://insight-ai-v1.streamlit.app")
-st.markdown("Made with ❤️ using Streamlit")
+st.caption("Live demo: https://insight-ai-v1.streamlit.app · Backend: https://o-s-o-k-insight-ai-backend.hf.space")
