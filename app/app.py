@@ -158,7 +158,7 @@ def show_maintenance_page(health_status):
         - Check back later if the issue persists
         """)
 
-    if st.button("🔄 Check Again", type="primary"):
+    if st.button("Check Again", type="primary"):
         st.rerun()
 
     st.divider()
@@ -166,11 +166,11 @@ def show_maintenance_page(health_status):
     ### About Insight AI
 
     Insight AI is an explainable image classification tool that provides:
-    - 🎯 **Predictions** - Identify ImageNet object classes with calibrated confidence
-    - 🔥 **Grad-CAM** - Visual explanations of model decisions
-    - 🧠 **SHAP** - Feature attribution maps (GradientExplainer)
-    - 🔍 **CLIP** - Zero-shot classification with custom labels
-    - 💬 **Captions** - Natural language image descriptions (BLIP)
+    - **Predictions** — Identify object classes with calibrated confidence
+    - **Grad-CAM** — Visual explanations of model decisions
+    - **SHAP** — Feature attribution maps (GradientExplainer)
+    - **CLIP** — Zero-shot classification with custom labels
+    - **Captions** — Natural language image descriptions (BLIP)
 
     **GitHub**: [O-S-O-K/insight_ai_app](https://github.com/O-S-O-K/insight_ai_app)
     """)
@@ -209,22 +209,22 @@ def image_hash(uploaded_file) -> str:
 def reset_state_on_new_image(new_hash: str):
     if st.session_state.get("image_hash") != new_hash:
         st.session_state.image_hash = new_hash
-        st.session_state.feedback_submitted = False
         st.session_state.predictions = None
+        st.session_state.predict_meta = {}
         st.session_state.caption = None
         st.session_state.gradcams = None
         st.session_state.shap_result = None
         st.session_state.clip_results = None
         st.session_state.active_learning_flag = False
         st.session_state.flag_reason = None
+        st.session_state.feedback_submitted = False
+        st.session_state.feedback_count = 0
 
 
-def display_gradcam_image(overlay_img: Image.Image, alpha: float, original_img: Image.Image):
-    """Blend overlay with original using alpha and display."""
-    original_img = original_img.convert("RGB")
-    overlay_img = overlay_img.convert("RGB").resize(original_img.size)
-    blended = Image.blend(original_img, overlay_img, alpha)
-    st.image(blended, caption="Grad-CAM Overlay", use_container_width=True)
+def decode_base64_image(b64_str: str) -> Image.Image:
+    """Decode a base64 string (with or without data URI prefix) to a PIL Image."""
+    raw = b64_str.split(",")[1] if "," in b64_str else b64_str
+    return Image.open(io.BytesIO(base64.b64decode(raw)))
 
 
 # ----------------------------
@@ -236,46 +236,49 @@ if not USE_MOCK:
 
     if not health_status["healthy"]:
         show_maintenance_page(health_status)
+else:
+    health_status = {"status": "ready", "healthy": True, "data": {}}
+
+# Grab live backend info for sidebar
+_health_data = health_status.get("data", {})
+_backend_model_type = _health_data.get("model_type", "imagenet")
+_medical_available = _health_data.get("medical_model_available", False)
 
 # ----------------------------
 # Sidebar
 # ----------------------------
 with st.sidebar:
-    st.header("Insight AI")
     st.caption("Explainable Image Intelligence")
-
     st.divider()
 
-    # Model info
+    # --- Model status (read-only badge) ---
     st.subheader("Model")
-    model_display = st.selectbox(
-        "Active model",
-        ["ImageNet (General)", "Medical Imaging (ISIC)"],
-        help="Switch requires backend MODEL_TYPE env var update.",
-    )
-    st.caption(
-        "MobileNetV2 · 1000 classes" if "ImageNet" in model_display
-        else "EfficientNetB0 · Melanoma / Benign"
-    )
+    if _backend_model_type == "medical":
+        st.success("Medical Imaging (EfficientNetB0)")
+        st.caption("Classes: Melanoma / Benign")
+    else:
+        st.info("ImageNet General (MobileNetV2)")
+        st.caption("1,000 ImageNet classes")
+
     if TEMPERATURE != 1.0:
         st.caption(f"Temperature scaling: T={TEMPERATURE}")
 
-    # Warn when Medical model is selected but the trained weights don't exist on the backend
-    if "Medical" in model_display:
-        _health_data = health_status.get("data", {}) if not USE_MOCK else {}
-        if not _health_data.get("medical_model_available", True):
-            st.warning(
-                "medical_model.h5 not found on the backend — predictions will use the "
-                "ImageNet model instead. Train and deploy the medical model to enable "
-                "EfficientNetB0 skin-lesion classification."
-            )
+    if not _medical_available and USE_MOCK is False:
+        st.caption("Medical model: not deployed")
+
+    st.caption(
+        "To switch models, update `MODEL_TYPE` in the backend environment variables.",
+        help="Set MODEL_TYPE=medical or MODEL_TYPE=imagenet on the HF Space and redeploy.",
+    )
 
     st.divider()
 
-    # MLflow recent runs
-    st.subheader("MLflow Runs")
-    if st.button("Refresh runs", key="refresh_mlflow"):
-        st.session_state.mlflow_runs = None
+    # --- Recent Predictions (MLflow) ---
+    st.subheader("Recent Predictions")
+    col_r, col_b = st.columns([3, 1])
+    with col_b:
+        if st.button("Refresh", key="refresh_mlflow", use_container_width=True):
+            st.session_state.mlflow_runs = None
 
     if st.session_state.get("mlflow_runs") is None:
         try:
@@ -289,198 +292,342 @@ with st.sidebar:
 
     if runs:
         for run in runs[:5]:
-            endpoint = run.get("tags", {}).get("endpoint", run.get("endpoint", "predict"))
-            conf = run.get("metrics", {}).get("top1_confidence", run.get("top1_confidence"))
-            conf_str = f" · {conf*100:.1f}%" if conf is not None else ""
-            st.caption(f"`{endpoint}`{conf_str}")
+            top_class = run.get("top1_class") or run.get("tags", {}).get("top1_class", "—")
+            conf = run.get("top1_confidence") or run.get("metrics", {}).get("top1_confidence")
+            endpoint = run.get("endpoint") or run.get("tags", {}).get("endpoint", "predict")
+            conf_str = f" ({conf*100:.0f}%)" if conf is not None else ""
+            # Human-readable: "Predicted: Cat (92%) via predict"
+            if endpoint == "clip":
+                st.caption(f"CLIP match: **{top_class}**{conf_str}")
+            else:
+                st.caption(f"Predicted: **{top_class}**{conf_str}")
     else:
-        st.caption("No runs recorded yet.")
+        st.caption("No predictions recorded yet.")
 
     st.divider()
 
-    # Active learning summary
-    st.subheader("Active Learning")
-    try:
-        al_data = get_active_learning_summary()
-        total = al_data.get("total_feedback", 0)
-        flagged = al_data.get("flagged", 0)
-        rate = al_data.get("flag_rate", 0.0)
-        st.metric("Flagged / Total", f"{flagged} / {total}")
-        if total > 0:
-            st.progress(min(rate, 1.0), text=f"Flag rate: {rate*100:.1f}%")
-    except Exception:
-        st.caption("Active learning data unavailable.")
+    # --- Active Learning (collapsed to save space) ---
+    with st.expander("Active Learning Pipeline"):
+        try:
+            al_data = get_active_learning_summary()
+            total = al_data.get("total_feedback", 0)
+            flagged = al_data.get("flagged", 0)
+            rate = al_data.get("flag_rate", 0.0)
+            st.metric("Flagged / Total", f"{flagged} / {total}")
+            if total > 0:
+                st.progress(min(rate, 1.0), text=f"Flag rate: {rate*100:.1f}%")
+            else:
+                st.caption("No feedback submitted yet.")
+        except Exception:
+            st.caption("Data unavailable.")
 
 # ----------------------------
 # Main UI
 # ----------------------------
 st.title("Insight AI")
-st.caption("Explainable image classification · BLIP captions · Grad-CAM · SHAP · CLIP zero-shot")
+st.caption(
+    "Upload an image to get AI predictions, visual explanations, and provide "
+    "feedback to improve the model."
+)
 
-uploaded_file = st.file_uploader("Upload an image", type=["jpg", "jpeg", "png"])
+uploaded_file = st.file_uploader(
+    "Upload an image",
+    type=["jpg", "jpeg", "png"],
+    help="Supported formats: JPG, JPEG, PNG.",
+)
 
 if uploaded_file:
     img = Image.open(uploaded_file).convert("RGB")
     img = ImageOps.exif_transpose(img)
-    st.image(img, caption="Uploaded image", use_container_width=True)
 
     img_hash = image_hash(uploaded_file)
     reset_state_on_new_image(img_hash)
 
-    # ----------------------------------------
-    # Action buttons: Predict | Caption | Grad-CAM | SHAP
-    # ----------------------------------------
-    col1, col2, col3, col4 = st.columns(4)
-
-    # --- Predict ---
-    with col1:
-        if st.button("Predict", use_container_width=True):
-            with st.spinner("Running prediction..."):
-                try:
-                    result = call_backend_predict(uploaded_file, top_k=TOP_K)
-                    preds = result.get("predictions", [])
-                    st.session_state.predictions = preds
-                    st.session_state.predict_meta = {
-                        "calibrated": result.get("calibrated", False),
-                        "temperature": result.get("temperature", 1.0),
-                    }
-                    # Auto-flag low-confidence predictions
-                    if preds and preds[0]["confidence"] < ACTIVE_LEARNING_THRESHOLD:
-                        st.session_state.active_learning_flag = True
-                        st.session_state.flag_reason = "low_confidence"
-                except Exception as e:
-                    st.error(str(e))
-
-    # --- Caption ---
-    with col2:
-        if st.button("Caption", use_container_width=True):
-            with st.spinner("Generating caption..."):
-                try:
-                    result = call_backend_caption(uploaded_file)
-                    st.session_state.caption = result
-                except Exception as e:
-                    st.error(str(e))
-
-    # --- Grad-CAM ---
-    with col3:
-        if st.button("Grad-CAM", use_container_width=True):
-            with st.spinner("Computing Grad-CAM..."):
-                try:
-                    result = call_backend_gradcam(uploaded_file, top_k=TOP_K)
-                    st.session_state.gradcams = result.get("gradcams", [])
-                except Exception as e:
-                    st.error(str(e))
-
-    # --- SHAP ---
-    with col4:
-        if st.button("SHAP", use_container_width=True):
-            with st.spinner("Computing SHAP attributions..."):
-                try:
-                    result = shap_explain(uploaded_file)
-                    st.session_state.shap_result = result
-                except Exception as e:
-                    st.error(str(e))
+    # Image preview + metadata
+    col_img, col_meta = st.columns([2, 1])
+    with col_img:
+        st.image(img, caption="Uploaded image", use_container_width=True)
+    with col_meta:
+        w, h = img.size
+        st.markdown("**Image info**")
+        st.caption(f"Filename: `{uploaded_file.name}`")
+        st.caption(f"Dimensions: {w} × {h} px")
+        st.caption(f"Size: {uploaded_file.size / 1024:.1f} KB")
+        st.caption(f"Model: {_backend_model_type.title()}")
 
     st.divider()
 
-    # ----------------------------------------
-    # Results display
-    # ----------------------------------------
+    # ============================================================
+    # STEP 1: ANALYZE  (Predict + Caption together)
+    # ============================================================
+    st.subheader("Step 1 — Analyze Image")
 
-    # Predictions
+    if st.button("Analyze Image", type="primary", use_container_width=True):
+        # Run predict and caption as sequential calls (caption is fast)
+        with st.spinner("Running predictions..."):
+            try:
+                result = call_backend_predict(uploaded_file, top_k=TOP_K)
+                preds = result.get("predictions", [])
+                st.session_state.predictions = preds
+                st.session_state.predict_meta = {
+                    "calibrated": result.get("calibrated", False),
+                    "temperature": result.get("temperature", 1.0),
+                }
+                if preds and preds[0]["confidence"] < ACTIVE_LEARNING_THRESHOLD:
+                    st.session_state.active_learning_flag = True
+                    st.session_state.flag_reason = "low_confidence"
+                # Invalidate MLflow cache so sidebar refreshes
+                st.session_state.mlflow_runs = None
+            except Exception as e:
+                st.error(f"Prediction failed: {e}")
+
+        with st.spinner("Generating caption..."):
+            try:
+                caption_result = call_backend_caption(uploaded_file)
+                st.session_state.caption = caption_result
+            except Exception:
+                # Caption failure is non-fatal
+                st.session_state.caption = None
+
+    # --- Show prediction results ---
     if st.session_state.get("predictions"):
         preds = st.session_state.predictions
         meta = st.session_state.get("predict_meta", {})
         calibrated = meta.get("calibrated", False)
         temp = meta.get("temperature", 1.0)
 
-        badge = " *(calibrated)*" if calibrated else ""
-        st.subheader(f"Top Predictions{badge}")
-
-        # Active learning warning
-        if st.session_state.get("active_learning_flag") and st.session_state.get("flag_reason") == "low_confidence":
+        # Low-confidence warning BEFORE the prediction list
+        if (
+            st.session_state.get("active_learning_flag")
+            and st.session_state.get("flag_reason") == "low_confidence"
+        ):
             st.warning(
-                f"Low-confidence prediction (top confidence < {ACTIVE_LEARNING_THRESHOLD*100:.0f}%) — "
-                "this image has been auto-flagged for human review."
+                f"Low-confidence prediction (top score < {ACTIVE_LEARNING_THRESHOLD*100:.0f}%) — "
+                "this image has been flagged for human review."
             )
+
+        badge = " *(calibrated)*" if calibrated else ""
+        st.markdown(f"**Top Predictions{badge}**")
 
         for i, pred in enumerate(preds, start=1):
             conf = pred["confidence"] * 100
-            bar_color = "normal" if conf >= 50 else "inverse"
-            st.write(f"{i}. **{pred['class_name']}** — {conf:.2f}%")
+            st.write(f"{i}. **{pred['class_name']}** — {conf:.1f}%")
+            st.caption("Confidence:")
             st.progress(min(pred["confidence"], 1.0))
 
         if calibrated:
-            st.caption(f"Confidence scores adjusted via temperature scaling (T={temp})")
+            st.caption(f"Scores adjusted via temperature scaling (T={temp})")
 
-    # Caption
+    # --- Show caption ---
     if st.session_state.get("caption"):
-        st.subheader("Image Caption (BLIP)")
-        st.write(st.session_state.caption.get("caption"))
+        st.markdown("**Image Caption (BLIP)**")
+        st.write(f"> {st.session_state.caption.get('caption', '')}")
 
-    # Grad-CAM and SHAP together in tabs
-    show_gradcam = bool(st.session_state.get("gradcams"))
-    show_shap = bool(st.session_state.get("shap_result"))
+    # ============================================================
+    # STEP 2: EXPLAINABILITY  (only after predictions)
+    # ============================================================
+    if st.session_state.get("predictions"):
+        st.divider()
+        st.subheader("Step 2 — Explainability")
+        st.caption("Visualize which parts of the image drove the prediction.")
 
-    if show_gradcam or show_shap:
-        viz_tabs = []
-        if show_gradcam:
-            viz_tabs.append("Grad-CAM")
-        if show_shap:
-            viz_tabs.append("SHAP")
+        col_gc, col_sh = st.columns(2)
 
-        tabs = st.tabs(viz_tabs)
-        tab_idx = 0
+        with col_gc:
+            if st.button("Grad-CAM", use_container_width=True):
+                with st.spinner("Computing Grad-CAM heatmaps..."):
+                    try:
+                        result = call_backend_gradcam(uploaded_file, top_k=TOP_K)
+                        st.session_state.gradcams = result.get("gradcams", [])
+                    except Exception as e:
+                        st.error(f"Grad-CAM failed: {e}")
 
-        if show_gradcam:
-            with tabs[tab_idx]:
-                st.subheader("Grad-CAM Outputs")
-                alpha = st.slider("Heatmap intensity", 0.0, 1.0, 0.4, 0.05, key="gradcam_alpha")
-                gcam_tabs = st.tabs(
-                    [f"{g['class_name']} ({g['confidence']*100:.1f}%)" for g in st.session_state.gradcams]
-                )
-                for gcam_tab, gradcam_data in zip(gcam_tabs, st.session_state.gradcams):
-                    with gcam_tab:
-                        b64_data = gradcam_data["heatmap_base64"].split(",")[1]
-                        overlay_img = Image.open(io.BytesIO(base64.b64decode(b64_data)))
-                        display_gradcam_image(overlay_img, alpha, img)
-            tab_idx += 1
+        with col_sh:
+            if st.button("SHAP  (may take ~1 min)", use_container_width=True):
+                with st.spinner("Computing SHAP attributions — this may take 1–2 minutes on free-tier CPU..."):
+                    try:
+                        result = shap_explain(uploaded_file)
+                        st.session_state.shap_result = result
+                    except Exception as e:
+                        st.error(f"SHAP failed: {e}")
 
-        if show_shap:
-            with tabs[tab_idx]:
-                shap = st.session_state.shap_result
-                st.subheader("SHAP Feature Attribution")
-                st.caption(f"Method: {shap.get('method', 'SHAP GradientExplainer')}")
-                b64 = shap.get("shap_plot_base64", "")
-                if b64 and len(b64) > 30:
-                    # Strip data URI prefix if present
-                    raw = b64.split(",")[1] if "," in b64 else b64
-                    shap_img = Image.open(io.BytesIO(base64.b64decode(raw)))
-                    st.image(shap_img, caption="SHAP Attribution Map", use_container_width=True)
-                st.info(shap.get("explanation", "Red regions increase the prediction; blue regions decrease it."))
-                if shap.get("top_class"):
-                    st.caption(
-                        f"Top predicted class: **{shap['top_class']}** "
-                        f"({shap.get('top_confidence', 0)*100:.1f}%)"
+        # Show results in tabs if either is available
+        show_gradcam = bool(st.session_state.get("gradcams"))
+        show_shap = bool(st.session_state.get("shap_result"))
+
+        if show_gradcam or show_shap:
+            tab_labels = []
+            if show_gradcam:
+                tab_labels.append("Grad-CAM")
+            if show_shap:
+                tab_labels.append("SHAP")
+
+            tabs = st.tabs(tab_labels)
+            tab_idx = 0
+
+            if show_gradcam:
+                with tabs[tab_idx]:
+                    alpha = st.slider(
+                        "Heatmap intensity", 0.0, 1.0, 0.4, 0.05, key="gradcam_alpha"
                     )
+                    gcam_entries = st.session_state.gradcams
+                    gcam_tab_labels = [
+                        f"{g['class_name']} ({g['confidence']*100:.1f}%)" for g in gcam_entries
+                    ]
+                    gcam_tabs = st.tabs(gcam_tab_labels)
+                    for gcam_tab, gradcam_data in zip(gcam_tabs, gcam_entries):
+                        with gcam_tab:
+                            b64 = gradcam_data["heatmap_base64"]
+                            raw = b64.split(",")[1] if "," in b64 else b64
+                            overlay_img = Image.open(io.BytesIO(base64.b64decode(raw)))
+                            # Blend heatmap with original
+                            original = img.convert("RGB")
+                            overlay = overlay_img.convert("RGB").resize(original.size)
+                            blended = Image.blend(original, overlay, alpha)
+                            st.image(blended, caption="Grad-CAM Overlay", use_container_width=True)
+                tab_idx += 1
 
-    # ----------------------------------------
-    # CLIP Zero-Shot Classification
-    # ----------------------------------------
+            if show_shap:
+                with tabs[tab_idx]:
+                    shap = st.session_state.shap_result
+                    st.caption(f"Method: {shap.get('method', 'SHAP GradientExplainer')}")
+                    b64 = shap.get("shap_plot_base64", "")
+                    if b64 and len(b64) > 30:
+                        raw = b64.split(",")[1] if "," in b64 else b64
+                        shap_img = Image.open(io.BytesIO(base64.b64decode(raw)))
+                        st.image(shap_img, caption="SHAP Attribution Map", use_container_width=True)
+                    st.info(
+                        shap.get(
+                            "explanation",
+                            "Red regions increase the prediction; blue regions decrease it.",
+                        )
+                    )
+                    if shap.get("top_class"):
+                        st.caption(
+                            f"Top predicted class: **{shap['top_class']}** "
+                            f"({shap.get('top_confidence', 0)*100:.1f}%)"
+                        )
+
+    # ============================================================
+    # STEP 3: FEEDBACK  (only after predictions)
+    # ============================================================
+    if st.session_state.get("predictions"):
+        st.divider()
+        preds = st.session_state.predictions
+
+        feedback_count = st.session_state.get("feedback_count", 0)
+        if feedback_count > 0:
+            st.subheader(f"Step 3 — Feedback  *(submitted {feedback_count}×)*")
+            st.caption("You can submit additional feedback for this image.")
+        else:
+            st.subheader("Step 3 — Feedback")
+            st.caption(
+                "Help improve the model by telling us which prediction was correct "
+                "and rating the overall quality."
+            )
+
+        # Which prediction was correct?
+        pred_options = [f"{p['class_name']} ({p['confidence']*100:.1f}%)" for p in preds]
+        pred_options.append("None of the above")
+
+        correct_choice = st.radio(
+            "Which prediction was correct?",
+            pred_options,
+            index=0,
+            key=f"correct_pred_{img_hash}_{feedback_count}",
+        )
+
+        correct_class = None
+        if correct_choice == "None of the above":
+            correct_class = st.text_input(
+                "What is the correct label?",
+                placeholder="e.g. melanoma, golden retriever, stop sign...",
+                key=f"correct_class_input_{img_hash}_{feedback_count}",
+            )
+        else:
+            # Extract just the class name (strip the confidence part)
+            correct_class = correct_choice.rsplit(" (", 1)[0]
+
+        feedback_text = st.text_area(
+            "Additional comments (optional)",
+            placeholder="e.g. The image shows a benign nevus, not melanoma. "
+            "Lighting was poor which may have affected the result.",
+            key=f"feedback_text_{img_hash}_{feedback_count}",
+        )
+
+        rating = st.slider(
+            "Overall rating",
+            1,
+            5,
+            3,
+            help="1 = Poor  ·  2 = Fair  ·  3 = Neutral  ·  4 = Good  ·  5 = Excellent",
+            key=f"rating_{img_hash}_{feedback_count}",
+        )
+        st.caption(f"Rating: {'★' * rating}{'☆' * (5 - rating)}  ({['', 'Poor', 'Fair', 'Neutral', 'Good', 'Excellent'][rating]})")
+
+        # Auto-flag checkbox — explain if pre-checked
+        auto_flagged = st.session_state.get("active_learning_flag", False)
+        flag_label = (
+            "Flag for human review  *(auto-flagged — low confidence)*"
+            if auto_flagged
+            else "Flag for human review"
+        )
+        manual_flag = st.checkbox(
+            flag_label,
+            value=auto_flagged,
+            help="Flagged images are added to the active learning queue for retraining.",
+            key=f"manual_flag_{img_hash}_{feedback_count}",
+        )
+
+        if st.button("Submit Feedback", key=f"submit_feedback_{img_hash}_{feedback_count}"):
+            top_conf = preds[0]["confidence"] if preds else None
+            top_class = preds[0]["class_name"] if preds else None
+            flag_reason = (
+                st.session_state.get("flag_reason")
+                if auto_flagged
+                else ("user_flagged" if manual_flag else None)
+            )
+
+            entry = {
+                "feedback": feedback_text,
+                "rating": rating,
+                "correct_class": correct_class,
+                "active_learning_flag": manual_flag,
+                "flag_reason": flag_reason,
+                "top1_confidence": top_conf,
+                "predicted_class": top_class,
+            }
+            try:
+                post_feedback_to_backend(uploaded_file, entry)
+                st.session_state.mlflow_runs = None
+                st.session_state.feedback_submitted = True
+                st.session_state.feedback_count = feedback_count + 1
+                st.success("Feedback submitted — thank you!")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Feedback submission failed: {e}")
+
+    # ============================================================
+    # STEP 4: CLIP ZERO-SHOT CLASSIFICATION
+    # ============================================================
     st.divider()
-    st.subheader("CLIP Zero-Shot Classification")
-    st.caption("Use OpenAI CLIP to classify against any custom labels — no training required.")
+    st.subheader("Step 4 — Zero-Shot Classification (CLIP)")
+    st.info(
+        "CLIP (Contrastive Language-Image Pretraining) can classify your image against "
+        "any labels you provide — no training required. Enter comma-separated labels "
+        "below and CLIP will rank them by visual similarity."
+    )
 
     clip_input = st.text_input(
         "Custom labels (comma-separated)",
-        placeholder="e.g. cat, dog, car, airplane",
+        placeholder="e.g. melanoma, benign lesion, normal skin, dermatitis",
         key="clip_label_input",
     )
 
-    if st.button("Classify with CLIP", use_container_width=False):
+    if st.button("Classify with CLIP", use_container_width=True, type="primary"):
         labels = [lbl.strip() for lbl in clip_input.split(",") if lbl.strip()]
         if not labels:
-            st.warning("Enter at least one label.")
+            st.warning("Enter at least one label before classifying.")
         elif len(labels) > 20:
             st.warning("Please enter 20 or fewer labels.")
         else:
@@ -488,8 +635,9 @@ if uploaded_file:
                 try:
                     result = clip_classify(uploaded_file, labels)
                     st.session_state.clip_results = result
+                    st.session_state.mlflow_runs = None
                 except Exception as e:
-                    st.error(str(e))
+                    st.error(f"CLIP classification failed: {e}")
 
     if st.session_state.get("clip_results"):
         clip_data = st.session_state.clip_results
@@ -498,52 +646,15 @@ if uploaded_file:
         st.caption(f"Model: {model_name}")
         if results:
             for r in results:
-                st.write(f"**{r['label']}** — {r['score']*100:.1f}%")
+                score_pct = r["score"] * 100
+                st.write(f"**{r['label']}** — {score_pct:.1f}%")
+                st.caption("Similarity score:")
                 st.progress(min(r["score"], 1.0))
 
-    # ----------------------------------------
-    # Human Feedback
-    # ----------------------------------------
-    st.divider()
-    st.subheader("Human Feedback")
-
-    if not st.session_state.get("feedback_submitted", False):
-        feedback_text = st.text_area("Your feedback")
-        rating = st.slider("Rating", 1, 5, 3)
-
-        # Active learning manual flag
-        auto_flagged = st.session_state.get("active_learning_flag", False)
-        manual_flag = st.checkbox(
-            "Flag this image for human review",
-            value=auto_flagged,
-            help="Flag uncertain or incorrect predictions for the active learning pipeline.",
+        st.info(
+            "Your CLIP classifications and label corrections are added to the active "
+            "learning queue and will inform future model retraining."
         )
 
-        if st.button("Submit Feedback"):
-            preds = st.session_state.get("predictions", [])
-            top_conf = preds[0]["confidence"] if preds else None
-            top_class = preds[0]["class_name"] if preds else None
-
-            flag_reason = st.session_state.get("flag_reason") if auto_flagged else ("user_flagged" if manual_flag else None)
-
-            entry = {
-                "feedback": feedback_text,
-                "rating": rating,
-                "active_learning_flag": manual_flag,
-                "flag_reason": flag_reason,
-                "top1_confidence": top_conf,
-                "predicted_class": top_class,
-            }
-            try:
-                post_feedback_to_backend(uploaded_file, entry)
-                # Update MLflow cache to refresh on next sidebar render
-                st.session_state.mlflow_runs = None
-                st.session_state.feedback_submitted = True
-                st.success("Feedback submitted — thank you!")
-            except Exception as e:
-                st.error(str(e))
-    else:
-        st.info("Feedback already submitted for this image.")
-
 else:
-    st.info("Upload an image to begin.")
+    st.info("Upload an image above to begin analysis.")
