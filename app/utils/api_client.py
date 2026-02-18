@@ -71,7 +71,7 @@ def caption_image(file_obj):
 def shap_explain(file_obj):
     """Return SHAP GradientExplainer attribution map."""
     files = {"file": _file_tuple(file_obj)}
-    r = requests.post(_v1_url("/shap"), files=files, timeout=90)
+    r = requests.post(_v1_url("/shap"), files=files, timeout=180)
     return _handle_response(r)
 
 # ----------------------------

@@ -294,8 +294,9 @@ def load_models_background():
                 print(f"✓ SHAP background loaded: {shap_background.shape}", flush=True)
             else:
                 # Generate random background samples for SHAP
-                print("Generating SHAP background dataset (50 samples)...", flush=True)
-                shap_background = np.random.uniform(-1, 1, (50, 224, 224, 3)).astype(np.float32)
+                # 10 samples keeps CPU inference under 60s on HF Spaces free tier
+                print("Generating SHAP background dataset (10 samples)...", flush=True)
+                shap_background = np.random.uniform(-1, 1, (10, 224, 224, 3)).astype(np.float32)
                 np.save(str(SHAP_BACKGROUND_PATH), shap_background)
                 print("✓ SHAP background generated and cached", flush=True)
             shap_explainer = shap.GradientExplainer(model, shap_background)
