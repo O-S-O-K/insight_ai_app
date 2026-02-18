@@ -359,6 +359,7 @@ def health():
         "models_loaded": models_loaded,
         "model_loaded": model is not None,
         "model_type": MODEL_TYPE,
+        "medical_model_available": MEDICAL_MODEL_PATH.exists(),
         "blip_enabled": ENABLE_BLIP,
         "blip_loaded": blip_model is not None,
         "clip_enabled": ENABLE_CLIP,

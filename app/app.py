@@ -260,6 +260,16 @@ with st.sidebar:
     if TEMPERATURE != 1.0:
         st.caption(f"Temperature scaling: T={TEMPERATURE}")
 
+    # Warn when Medical model is selected but the trained weights don't exist on the backend
+    if "Medical" in model_display:
+        _health_data = health_status.get("data", {}) if not USE_MOCK else {}
+        if not _health_data.get("medical_model_available", True):
+            st.warning(
+                "medical_model.h5 not found on the backend — predictions will use the "
+                "ImageNet model instead. Train and deploy the medical model to enable "
+                "EfficientNetB0 skin-lesion classification."
+            )
+
     st.divider()
 
     # MLflow recent runs
