@@ -37,6 +37,16 @@ build/
 models/*.backup
 models/*_backup/
 
+# Training checkpoints (intermediate — only the final model is committed)
+models/phase1_best.h5
+models/phase2_best.h5
+
+# Training data (downloaded locally, not tracked in git)
+data/
+
+# Windows artifact
+nul
+
 # Temporary files
 tmpclaude-*-cwd
 *.log
