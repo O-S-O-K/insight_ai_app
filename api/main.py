@@ -158,9 +158,22 @@ def preprocess_image(img: Image.Image, model_type: str = "imagenet") -> np.ndarr
 # ----------------------------
 def load_model_safe():
     """Load CNN model with fallback mechanisms."""
-    primary_path = MEDICAL_MODEL_PATH if (MODEL_TYPE == "medical" and MEDICAL_MODEL_PATH.exists()) else MODEL_PATH
     model = None
     load_errors = []
+
+    # For imagenet mode: prefer official pretrained weights over the .h5 file
+    if MODEL_TYPE == "imagenet":
+        try:
+            from tensorflow.keras.applications import MobileNetV2
+            model = MobileNetV2(weights="imagenet", include_top=True, input_shape=(224, 224, 3))
+            print(f"  ✓ Loaded MobileNetV2 pretrained weights (imagenet, {len(model.layers)} layers)")
+            return model
+        except Exception as e:
+            load_errors.append(f"MobileNetV2 pretrained load failed: {str(e)[:100]}")
+            model = None
+
+    # For medical mode (or imagenet fallback): load from .h5 file
+    primary_path = MEDICAL_MODEL_PATH if (MODEL_TYPE == "medical" and MEDICAL_MODEL_PATH.exists()) else MODEL_PATH
 
     if primary_path.exists():
         print(f"Attempting to load model from {primary_path}")
