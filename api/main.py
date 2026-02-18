@@ -582,17 +582,16 @@ async def shap_explain(file: UploadFile = File(...)):
         img = Image.open(file.file).convert("RGB")
         x = preprocess_image(img, MODEL_TYPE)
 
-        # Compute SHAP values for top predicted class
-        shap_values = shap_explainer.shap_values(x)
+        # Compute SHAP values for top predicted class only.
+        # ranked_outputs=1 limits computation to the top-1 class (vs all 1000),
+        # which is ~1000x faster on CPU.
+        shap_values, indices = shap_explainer.shap_values(x, ranked_outputs=1)
 
         raw_preds = model(x, training=False).numpy()[0]
-        top_class_idx = int(raw_preds.argsort()[-1])
+        top_class_idx = int(indices[0][0])
 
-        # Extract SHAP values for top class
-        if isinstance(shap_values, list):
-            shap_img = shap_values[top_class_idx][0]  # [H, W, C]
-        else:
-            shap_img = shap_values[0]
+        # shap_values is a list with one entry (ranked_outputs=1)
+        shap_img = shap_values[0][0]  # [H, W, C]
 
         # Aggregate across channels and normalize
         shap_agg = np.abs(shap_img).mean(axis=-1)  # [H, W]
