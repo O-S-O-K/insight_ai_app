@@ -79,7 +79,8 @@ RUN mkdir -p /app/feedback_images \
 USER appuser
 
 # Expose FastAPI port
-EXPOSE 8000
+# HF Spaces uses 7860; Render provides $PORT
+EXPOSE 7860
 
-# Run FastAPI (honor Render's PORT if provided)
-CMD ["sh", "-c", "echo 'Starting uvicorn...' && echo 'Working dir:' && pwd && echo 'Contents:' && ls -la && echo 'Python path:' && python -c 'import sys; print(sys.path)' && echo 'Starting app on port ${PORT:-8000}' && uvicorn api.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
+# Run FastAPI (HF Spaces default 7860, Render provides $PORT)
+CMD ["sh", "-c", "echo 'Starting uvicorn...' && echo 'Working dir:' && pwd && echo 'Contents:' && ls -la && echo 'Starting app on port ${PORT:-7860}' && uvicorn api.main:app --host 0.0.0.0 --port ${PORT:-7860}"]

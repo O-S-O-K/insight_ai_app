@@ -11,8 +11,10 @@ scripts/
     ├── check_tf_keras.py
     ├── check_tf_version.py
     ├── convert_to_functional_api.py
+    ├── download_isic_data.py
     ├── fix_models_for_tf2.10.py
-    └── regenerate_savedmodel.py
+    ├── regenerate_savedmodel.py
+    └── train_medical.py
 ```
 
 ## Model Management Scripts
@@ -242,7 +244,86 @@ SavedModel Regeneration Script
 ======================================================================
 ```
 
+## Medical Imaging Scripts
+
+### download_isic_data.py
+
+**Purpose**: Download and organize ISIC 2020 Skin Lesion dataset for medical model training.
+
+**Usage**:
+```bash
+python scripts/models/download_isic_data.py [--output-dir data/isic2020] [--max-images 5000]
+```
+
+**What it does**:
+1. Downloads ISIC 2020 training metadata CSV from ISIC S3
+2. Downloads a balanced subset of melanoma + benign images via ISIC API
+3. Organizes into train/val split with class subdirectories
+4. Saves dataset_summary.json with class distribution
+
+**Output structure**:
+```
+data/isic2020/
+├── ISIC_2020_Training_GroundTruth.csv
+├── dataset_summary.json
+├── images/
+├── train/
+│   ├── benign/
+│   └── melanoma/
+└── val/
+    ├── benign/
+    └── melanoma/
+```
+
+**Note**: ISIC 2020 is licensed CC BY-NC 4.0 (non-commercial).
+
+---
+
+### train_medical.py
+
+**Purpose**: Fine-tune EfficientNetB0 on ISIC 2020 for binary skin lesion classification.
+
+**Usage**:
+```bash
+python scripts/models/train_medical.py [--data-dir data/isic2020] [--epochs-phase1 10] [--epochs-phase2 20]
+```
+
+**What it does**:
+1. Builds EfficientNetB0 with classification head (ImageNet pretrained)
+2. Phase 1: Trains head only (base frozen, LR=1e-3)
+3. Phase 2: Fine-tunes top 20 EfficientNet layers (LR=1e-5)
+4. Handles 55:1 class imbalance via class weights
+5. Evaluates: accuracy, AUC, sensitivity, specificity
+6. Saves model as `models/medical_model.h5`
+7. Updates `models/medical_metadata.json` with metrics
+
+**Arguments**:
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `--data-dir` | `data/isic2020` | ISIC dataset directory |
+| `--epochs-phase1` | `10` | Max epochs for head training |
+| `--epochs-phase2` | `20` | Max epochs for fine-tuning |
+| `--fine-tune-layers` | `20` | Top EfficientNet layers to unfreeze |
+| `--dropout` | `0.3` | Dropout rate in classification head |
+
+---
+
 ## Common Workflows
+
+### Training the Medical Imaging Model
+
+```bash
+# 1. Download ISIC 2020 dataset (balanced subset)
+python scripts/models/download_isic_data.py --output-dir data/isic2020
+
+# 2. Train EfficientNetB0
+python scripts/models/train_medical.py --data-dir data/isic2020
+
+# 3. Verify model
+python scripts/models/check_model_shape.py
+```
+
+---
 
 ### After Upgrading TensorFlow
 

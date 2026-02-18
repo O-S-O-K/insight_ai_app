@@ -65,7 +65,7 @@ source .venv/bin/activate  # Linux/Mac
 ```bash
 pip install -r api/requirements.txt
 cd api
-uvicorn main:app --reload --host 0.0.0.0 --port 8000
+uvicorn main:app --reload --host 0.0.0.0 --port 7860
 ```
 
 **Start Frontend** (Terminal 2):
@@ -75,7 +75,7 @@ pip install -r requirements.txt
 
 # Create Streamlit secrets
 mkdir -p .streamlit
-echo 'INSIGHT_BACKEND_URL = "http://localhost:8000"' > .streamlit/secrets.toml
+echo 'INSIGHT_BACKEND_URL = "http://localhost:7860"' > .streamlit/secrets.toml
 
 streamlit run app/app.py
 ```

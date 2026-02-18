@@ -9,13 +9,13 @@ This directory contains technical documentation for system internals, deployment
 ### Setup & Deployment
 
 - **[SETUP.md](SETUP.md)** - Complete setup guide for local development and deployment
-- **[RENDER_QUICKSTART.md](RENDER_QUICKSTART.md)** - Quick reference for Render.com deployment
 - **[DEPLOYMENT_SUMMARY.md](DEPLOYMENT_SUMMARY.md)** - Deployment architecture and optimization history
 
 ### Technical References
 
 - **[MODEL_LOADING_FIXES.md](MODEL_LOADING_FIXES.md)** - Model loading troubleshooting and fallback mechanisms
 - **[SAVEDMODEL_FIX.md](SAVEDMODEL_FIX.md)** - SavedModel regeneration and compatibility fixes
+- **[../models/MODEL_CARD.md](../models/MODEL_CARD.md)** - Responsible AI model card (intended use, ethics, metrics)
 
 ### Project Documentation
 

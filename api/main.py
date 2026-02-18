@@ -5,19 +5,25 @@ import io
 import base64
 import json
 import traceback
-import hashlib
+import threading
 
 print("Step 1: Basic imports OK")
 
-# Force CPU execution and quieter TF logs in CPU-only environments
+# Force CPU execution and quieter TF logs
 os.environ.setdefault("CUDA_VISIBLE_DEVICES", "-1")
 os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
 os.environ.setdefault("TF_USE_LEGACY_KERAS", "1")
 
-# Memory optimization: Skip BLIP loading for low-memory environments (e.g., Render free tier)
+# Feature flags
 ENABLE_BLIP = os.environ.get("ENABLE_BLIP", "true").lower() == "true"
+ENABLE_SHAP = os.environ.get("ENABLE_SHAP", "true").lower() == "true"
+ENABLE_CLIP = os.environ.get("ENABLE_CLIP", "true").lower() == "true"
+MODEL_TYPE = os.environ.get("MODEL_TYPE", "imagenet")  # "imagenet" | "medical"
+ACTIVE_LEARNING_THRESHOLD = float(os.environ.get("ACTIVE_LEARNING_THRESHOLD", "0.5"))
+MLFLOW_TRACKING_URI = os.environ.get("MLFLOW_TRACKING_URI", "file:./mlruns")
+MLFLOW_EXPERIMENT_NAME = os.environ.get("MLFLOW_EXPERIMENT_NAME", "insight-ai-inference")
 
-print("Step 2: Environment variables set")
+print("Step 2: Feature flags set")
 
 import numpy as np
 from PIL import Image
@@ -25,36 +31,56 @@ import tensorflow as tf
 
 print(f"Step 3: TensorFlow {tf.__version__} loaded")
 
-# Handle both Keras 3 (separate package) and legacy tf.keras
+# Handle both Keras 3 and legacy tf.keras
 try:
-    # Try legacy tf.keras first (works with TF_USE_LEGACY_KERAS=1)
     from tensorflow import keras
     from tensorflow.keras import layers
     from tensorflow.keras.models import Model
-    from tensorflow.keras.applications.mobilenet_v2 import preprocess_input
+    from tensorflow.keras.applications.mobilenet_v2 import preprocess_input as mobilenet_preprocess
     print("Step 4: Using tf.keras (legacy)")
 except (ImportError, ModuleNotFoundError, AttributeError) as e:
-    # Fall back to standalone Keras 3
     print(f"Step 4a: tf.keras failed ({e}), trying standalone keras")
     import keras
     from keras import layers
     from keras.models import Model
-    from keras.applications.mobilenet_v2 import preprocess_input
+    from keras.applications.mobilenet_v2 import preprocess_input as mobilenet_preprocess
     print("Step 4b: Using standalone keras")
 
 import matplotlib.cm as cm
 
 print("Step 5: Matplotlib loaded")
 
-# Import torch for BLIP model
+# PyTorch for BLIP and CLIP
 try:
     import torch
     print("Step 5a: PyTorch loaded")
 except ImportError:
     torch = None
-    print("Step 5a: PyTorch not available (BLIP captions will not work)")
+    print("Step 5a: PyTorch not available (BLIP/CLIP will not work)")
 
-from fastapi import FastAPI, UploadFile, File, Form
+# MLflow
+try:
+    import mlflow
+    mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
+    mlflow.set_experiment(MLFLOW_EXPERIMENT_NAME)
+    MLFLOW_AVAILABLE = True
+    print("Step 5b: MLflow loaded")
+except ImportError:
+    mlflow = None
+    MLFLOW_AVAILABLE = False
+    print("Step 5b: MLflow not available (install mlflow to enable tracking)")
+
+# SHAP
+try:
+    import shap
+    SHAP_AVAILABLE = True
+    print("Step 5c: SHAP loaded")
+except ImportError:
+    shap = None
+    SHAP_AVAILABLE = False
+    print("Step 5c: SHAP not available (install shap to enable explainability)")
+
+from fastapi import FastAPI, APIRouter, UploadFile, File, Form
 from fastapi.responses import JSONResponse
 
 print("Step 6: FastAPI loaded")
@@ -68,99 +94,104 @@ FEEDBACK_DIR = ROOT / "feedback_images"
 FEEDBACK_DIR.mkdir(parents=True, exist_ok=True)
 
 MODEL_PATH = MODELS_DIR / "cnn_baseline_functional.h5"
+MEDICAL_MODEL_PATH = MODELS_DIR / "medical_model.h5"
 SAVEDMODEL_DIR = MODELS_DIR / "cnn_baseline_savedmodel"
 METADATA_PATH = MODELS_DIR / "model_metadata.json"
+MEDICAL_METADATA_PATH = MODELS_DIR / "medical_metadata.json"
+SHAP_BACKGROUND_PATH = MODELS_DIR / "shap_background.npy"
 
-# Alternative model paths to try (fallback to old models if needed)
+# Fallback model paths
 ALT_MODEL_PATHS = [
     MODELS_DIR / "cnn_model_fixed.h5",
     MODELS_DIR / "cnn_baseline.h5",
 ]
 
 IMG_SIZE = (224, 224)
-TOP_K = 3  # number of top predictions to return
+TOP_K = 3
 
 # ----------------------------
 # Load model metadata
 # ----------------------------
-if METADATA_PATH.exists():
+if MODEL_TYPE == "medical" and MEDICAL_METADATA_PATH.exists():
+    with open(MEDICAL_METADATA_PATH, "r") as f:
+        metadata = json.load(f)
+elif METADATA_PATH.exists():
     with open(METADATA_PATH, "r") as f:
         metadata = json.load(f)
-    LABEL_MAP = metadata.get("classes", {})
 else:
-    LABEL_MAP = {}
+    metadata = {}
+
+LABEL_MAP = metadata.get("classes", {})
+TEMPERATURE = float(metadata.get("temperature", 1.0))
 
 # ----------------------------
-# Load CNN model with proper error handling
+# Confidence calibration
+# ----------------------------
+def apply_temperature_scaling(logits: np.ndarray, temperature: float = 1.0) -> np.ndarray:
+    """Temperature scaling for calibrated confidence scores.
+    Divides logits by temperature before softmax to reduce overconfidence.
+    """
+    if temperature == 1.0:
+        return logits
+    scaled = logits / temperature
+    exp_scaled = np.exp(scaled - np.max(scaled))
+    return exp_scaled / (exp_scaled.sum() + 1e-8)
+
+# ----------------------------
+# Preprocessing
+# ----------------------------
+def preprocess_image(img: Image.Image, model_type: str = "imagenet") -> np.ndarray:
+    """Preprocess image for model inference."""
+    img_resized = img.resize(IMG_SIZE)
+    x = np.expand_dims(np.array(img_resized), axis=0).astype(np.float32)
+    # Both imagenet and medical models use MobileNetV2-style normalization [-1, 1]
+    x = mobilenet_preprocess(x)
+    return x
+
+# ----------------------------
+# Model loading
 # ----------------------------
 def load_model_safe():
-    """Load model with fallback mechanisms and version compatibility handling"""
+    """Load CNN model with fallback mechanisms."""
+    primary_path = MEDICAL_MODEL_PATH if (MODEL_TYPE == "medical" and MEDICAL_MODEL_PATH.exists()) else MODEL_PATH
     model = None
     load_errors = []
 
-    # Try H5 format FIRST (SavedModel has compatibility issues)
-    if MODEL_PATH.exists():
-        print(f"Attempting to load H5 model from {MODEL_PATH}")
-
+    if primary_path.exists():
+        print(f"Attempting to load model from {primary_path}")
         try:
-            model = tf.keras.models.load_model(str(MODEL_PATH), compile=False)
-            print(f"  ✓ H5 model loaded successfully, type: {type(model)}")
-
-            # Validate H5 model
-            if not hasattr(model, 'layers'):
-                raise AttributeError(f"H5 model (type: {type(model)}) does not have 'layers' attribute")
-            if not hasattr(model, 'predict'):
-                raise AttributeError(f"H5 model (type: {type(model)}) does not have 'predict' method")
-
-            print(f"  ✓ H5 model validation successful")
-
+            model = tf.keras.models.load_model(str(primary_path), compile=False)
+            if not hasattr(model, 'layers') or not hasattr(model, 'predict'):
+                raise AttributeError("Model missing required attributes")
+            print(f"  ✓ Model loaded: {len(model.layers)} layers")
         except Exception as e:
-            error_msg = f"H5 model loading failed: {str(e)[:100]}"
-            print(f"  ✗ {error_msg}")
-            load_errors.append(error_msg)
+            load_errors.append(f"Primary load failed: {str(e)[:100]}")
             model = None
 
-    # Try alternative H5 model files if primary failed
     if model is None:
         for alt_path in ALT_MODEL_PATHS:
             if not alt_path.exists():
                 continue
-
-            print(f"Attempting to load alternative H5 model from {alt_path.name}")
             try:
                 model = tf.keras.models.load_model(str(alt_path), compile=False)
-                print(f"  ✓ Alternative H5 model loaded successfully, type: {type(model)}")
-
-                # Validate
-                if not hasattr(model, 'layers'):
-                    raise AttributeError("Model missing 'layers' attribute")
-                if not hasattr(model, 'predict'):
-                    raise AttributeError("Model missing 'predict' method")
-
-                print(f"  ✓ Alternative model validation successful")
+                if not hasattr(model, 'layers') or not hasattr(model, 'predict'):
+                    raise AttributeError("Model missing required attributes")
+                print(f"  ✓ Fallback model loaded: {alt_path.name}")
                 break
-
             except Exception as e:
-                error_msg = f"Alternative {alt_path.name} failed: {str(e)[:100]}"
-                print(f"  ✗ {error_msg}")
-                load_errors.append(error_msg)
+                load_errors.append(f"Fallback {alt_path.name} failed: {str(e)[:100]}")
                 model = None
-                continue
 
-    # If all loading strategies failed
     if model is None:
         raise RuntimeError(
-            f"Failed to load model from all H5 formats.\n"
-            f"Errors:\n" + "\n".join(f"  - {err}" for err in load_errors) + "\n\n"
-            f"The model files appear to be incompatible with TensorFlow 2.15.0.\n"
-            f"Please regenerate the model using: python fix_models_for_tf2.10.py"
+            "Failed to load model from all paths.\nErrors:\n" +
+            "\n".join(f"  - {err}" for err in load_errors)
         )
 
-    print(f"✓ Model loaded successfully with {len(model.layers)} layers")
     return model
 
 def find_last_conv_layer(model):
-    """Find the last Conv2D layer in the model for Grad-CAM"""
+    """Find last Conv2D layer in model for Grad-CAM."""
     if not hasattr(model, 'layers'):
         raise AttributeError(f"Model (type: {type(model)}) does not have 'layers' attribute")
 
@@ -169,73 +200,106 @@ def find_last_conv_layer(model):
             print(f"✓ Found last Conv2D layer: {layer.name}")
             return layer.name
 
-    # If no Conv2D found, try to find it in nested models (like MobileNetV2)
+    # Search nested layers (e.g., MobileNetV2 inside custom model)
     for layer in reversed(model.layers):
         if hasattr(layer, 'layers'):
             for sublayer in reversed(layer.layers):
                 if isinstance(sublayer, layers.Conv2D):
-                    print(f"✓ Found last Conv2D layer in nested model: {sublayer.name}")
+                    print(f"✓ Found Conv2D in nested model: {sublayer.name}")
                     return sublayer.name
 
-    raise ValueError("No Conv2D layer found in model. Grad-CAM requires a convolutional layer.")
+    raise ValueError("No Conv2D layer found. Grad-CAM requires a convolutional layer.")
 
 # ----------------------------
-# Global variables for models (loaded at startup)
+# Global model state
 # ----------------------------
 model = None
 last_conv_layer_name = None
 blip_processor = None
 blip_model = None
+clip_model = None
+clip_processor = None
+shap_background = None
+shap_explainer = None
 device = None
 models_loading = True
 models_loaded = False
 
 # ----------------------------
-# FastAPI app
+# FastAPI app + versioned router
 # ----------------------------
-app = FastAPI(title="Insight AI API")
+app = FastAPI(title="Insight AI API", version="1.0.0")
+router = APIRouter(prefix="/api/v1")
 
 # ----------------------------
-# Background task to load models (non-blocking)
+# Background model loading
 # ----------------------------
 def load_models_background():
-    """Load models in background thread"""
-    global model, last_conv_layer_name, blip_processor, blip_model, device, models_loading, models_loaded
+    """Load all models in a background thread (non-blocking startup)."""
+    global model, last_conv_layer_name, blip_processor, blip_model
+    global clip_model, clip_processor, shap_background, shap_explainer
+    global device, models_loading, models_loaded
 
     try:
         print("=" * 60, flush=True)
         print("INITIALIZING INSIGHT AI BACKEND (background)", flush=True)
+        print(f"MODEL_TYPE: {MODEL_TYPE}", flush=True)
         print("=" * 60, flush=True)
 
-        # Load CNN model
+        # Load CNN classifier
         print("Loading CNN model...", flush=True)
         model = load_model_safe()
-        print(f"CNN model loaded: {type(model)}", flush=True)
-
-        print("Finding last Conv2D layer...", flush=True)
         last_conv_layer_name = find_last_conv_layer(model)
-        print(f"✓ Grad-CAM configured for layer: {last_conv_layer_name}", flush=True)
+        print(f"✓ Grad-CAM layer: {last_conv_layer_name}", flush=True)
 
-        # Load BLIP model (only if enabled, to save memory)
+        # Load BLIP captioning model
         if ENABLE_BLIP:
-            print("Loading BLIP captioning model from cache...", flush=True)
+            print("Loading BLIP captioning model...", flush=True)
             from transformers import BlipProcessor, BlipForConditionalGeneration
-
             if torch is None:
-                raise ImportError("PyTorch is not available. Cannot load BLIP model.")
-
+                raise ImportError("PyTorch not available. Cannot load BLIP.")
             blip_processor = BlipProcessor.from_pretrained("Salesforce/blip-image-captioning-base")
-            print("✓ BLIP processor loaded", flush=True)
-
             blip_model = BlipForConditionalGeneration.from_pretrained("Salesforce/blip-image-captioning-base")
-            print("✓ BLIP model loaded", flush=True)
-
             blip_model.eval()
             device = "cuda" if torch.cuda.is_available() else "cpu"
             blip_model.to(device)
-            print(f"✓ BLIP model moved to device: {device}", flush=True)
+            print(f"✓ BLIP loaded on {device}", flush=True)
         else:
-            print("⚠ BLIP captioning DISABLED (ENABLE_BLIP=false) - captions unavailable", flush=True)
+            print("⚠ BLIP disabled (ENABLE_BLIP=false)", flush=True)
+
+        # Load CLIP zero-shot model
+        if ENABLE_CLIP and torch is not None:
+            print("Loading CLIP zero-shot model...", flush=True)
+            from transformers import CLIPModel, CLIPProcessor
+            clip_model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32")
+            clip_processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
+            clip_device = "cuda" if torch.cuda.is_available() else "cpu"
+            clip_model.to(clip_device)
+            clip_model.eval()
+            print(f"✓ CLIP ViT-B/32 loaded on {clip_device}", flush=True)
+        elif ENABLE_CLIP:
+            print("⚠ CLIP disabled: PyTorch not available", flush=True)
+        else:
+            print("⚠ CLIP disabled (ENABLE_CLIP=false)", flush=True)
+
+        # Set up SHAP explainer
+        if ENABLE_SHAP and SHAP_AVAILABLE and model is not None:
+            print("Setting up SHAP GradientExplainer...", flush=True)
+            if SHAP_BACKGROUND_PATH.exists():
+                shap_background = np.load(str(SHAP_BACKGROUND_PATH))
+                print(f"✓ SHAP background loaded: {shap_background.shape}", flush=True)
+            else:
+                # Generate random background samples for SHAP
+                print("Generating SHAP background dataset (50 samples)...", flush=True)
+                shap_background = np.random.uniform(-1, 1, (50, 224, 224, 3)).astype(np.float32)
+                np.save(str(SHAP_BACKGROUND_PATH), shap_background)
+                print("✓ SHAP background generated and cached", flush=True)
+            shap_explainer = shap.GradientExplainer(model, shap_background)
+            print("✓ SHAP GradientExplainer ready", flush=True)
+        elif ENABLE_SHAP and not SHAP_AVAILABLE:
+            print("⚠ SHAP disabled: shap package not installed", flush=True)
+        else:
+            print("⚠ SHAP disabled (ENABLE_SHAP=false)", flush=True)
 
         models_loaded = True
         models_loading = False
@@ -250,73 +314,109 @@ def load_models_background():
         print("=" * 60, flush=True)
         print("❌ MODEL LOADING ERROR:", flush=True)
         print(str(e), flush=True)
-        import traceback
         traceback.print_exc()
         print("=" * 60, flush=True)
 
-# ----------------------------
-# Startup event - launch background model loading
-# ----------------------------
 @app.on_event("startup")
 async def startup_event():
-    """Launch model loading in background (non-blocking)"""
-    import threading
+    """Launch model loading in background (non-blocking)."""
     print("Starting model loading in background thread...", flush=True)
     thread = threading.Thread(target=load_models_background, daemon=True)
     thread.start()
-    print("✓ Background model loading initiated - server ready for requests", flush=True)
+    print("✓ Background model loading initiated - server ready", flush=True)
 
 # ----------------------------
-# Health check
+# Helper: check models ready
 # ----------------------------
-@app.get("/")
-def health():
-    return {
-        "status": "loading" if models_loading else ("ready" if models_loaded else "error"),
-        "models_loading": models_loading,
-        "models_loaded": models_loaded,
-        "model_loaded": model is not None,
-        "blip_enabled": ENABLE_BLIP,
-        "blip_loaded": blip_model is not None,
-        "model_type": str(type(model)) if model else None,
-        "gradcam_layer": last_conv_layer_name,
-        "tensorflow_version": tf.__version__,
-    }
-
-# ----------------------------
-# Prediction endpoint (top-K)
-# ----------------------------
-@app.post("/predict")
-async def predict(file: UploadFile = File(...)):
-    # Check if models are ready
+def _check_models_ready():
+    """Returns a JSONResponse error if models are not ready, else None."""
     if models_loading:
         return JSONResponse(
             status_code=503,
-            content={"error": "Models are still loading. Please wait and try again in a few moments."}
+            content={"error": "Models are still loading. Please try again in a few moments."}
         )
     if not models_loaded or model is None:
         return JSONResponse(
             status_code=503,
             content={"error": "Models failed to load. Please check server logs."}
         )
+    return None
+
+# ----------------------------
+# Root health check (unversioned)
+# ----------------------------
+@app.get("/")
+def health():
+    return {
+        "status": "loading" if models_loading else ("ready" if models_loaded else "error"),
+        "version": "1.0.0",
+        "models_loading": models_loading,
+        "models_loaded": models_loaded,
+        "model_loaded": model is not None,
+        "model_type": MODEL_TYPE,
+        "blip_enabled": ENABLE_BLIP,
+        "blip_loaded": blip_model is not None,
+        "clip_enabled": ENABLE_CLIP,
+        "clip_loaded": clip_model is not None,
+        "shap_enabled": ENABLE_SHAP,
+        "shap_ready": shap_explainer is not None,
+        "mlflow_enabled": MLFLOW_AVAILABLE,
+        "gradcam_layer": last_conv_layer_name,
+        "tensorflow_version": tf.__version__,
+    }
+
+# ----------------------------
+# v1: Prediction endpoint
+# ----------------------------
+@router.post("/predict")
+async def predict(file: UploadFile = File(...)):
+    err = _check_models_ready()
+    if err:
+        return err
 
     try:
-        img = Image.open(file.file).convert("RGB").resize(IMG_SIZE)
-        x = np.expand_dims(np.array(img), axis=0)
-        x = preprocess_input(x)
+        img = Image.open(file.file).convert("RGB")
+        x = preprocess_image(img, MODEL_TYPE)
 
-        preds = model.predict(x)[0]
-        top_indices = preds.argsort()[-TOP_K:][::-1]  # top K indices
+        # Use model() instead of model.predict() to get raw logits for calibration
+        raw_preds = model(x, training=False).numpy()[0]
+        calibrated_preds = apply_temperature_scaling(raw_preds, TEMPERATURE)
 
-        top_predictions = []
-        for idx in top_indices:
-            top_predictions.append({
+        top_indices = calibrated_preds.argsort()[-TOP_K:][::-1]
+        top_predictions = [
+            {
                 "class_idx": int(idx),
                 "class_name": LABEL_MAP.get(str(idx), f"Class {idx}"),
-                "confidence": float(preds[idx])
-            })
+                "confidence": float(calibrated_preds[idx]),
+                "raw_confidence": float(raw_preds[idx]),
+            }
+            for idx in top_indices
+        ]
 
-        return {"predictions": top_predictions}
+        top1_conf = top_predictions[0]["confidence"]
+        active_learning_flag = top1_conf < ACTIVE_LEARNING_THRESHOLD
+
+        # MLflow: log inference metadata
+        if MLFLOW_AVAILABLE:
+            try:
+                with mlflow.start_run(run_name="predict"):
+                    mlflow.log_param("model_type", MODEL_TYPE)
+                    mlflow.log_param("top_k", TOP_K)
+                    mlflow.log_param("temperature", TEMPERATURE)
+                    mlflow.log_metric("top1_confidence", top1_conf)
+                    mlflow.log_metric("active_learning_flag", int(active_learning_flag))
+                    mlflow.set_tag("endpoint", "predict")
+                    mlflow.set_tag("top1_class", top_predictions[0]["class_name"])
+            except Exception:
+                pass  # MLflow errors never break inference
+
+        return {
+            "predictions": top_predictions,
+            "calibrated": TEMPERATURE != 1.0,
+            "temperature": TEMPERATURE,
+            "active_learning_flag": active_learning_flag,
+            "low_confidence": active_learning_flag,
+        }
 
     except Exception as e:
         return JSONResponse(
@@ -325,27 +425,22 @@ async def predict(file: UploadFile = File(...)):
         )
 
 # ----------------------------
-# Caption endpoint
+# v1: Caption endpoint
 # ----------------------------
-@app.post("/caption")
+@router.post("/caption")
 async def caption(file: UploadFile = File(...)):
-    # Check if BLIP is enabled
     if not ENABLE_BLIP:
         return JSONResponse(
             status_code=503,
-            content={"error": "Image captioning is disabled on this deployment to save memory. Please enable ENABLE_BLIP environment variable or upgrade to a larger instance."}
+            content={"error": "Image captioning is disabled (ENABLE_BLIP=false)."}
         )
-
-    # Check if models are ready
-    if models_loading:
+    err = _check_models_ready()
+    if err:
+        return err
+    if blip_model is None or blip_processor is None:
         return JSONResponse(
             status_code=503,
-            content={"error": "Models are still loading. Please wait and try again in a few moments."}
-        )
-    if not models_loaded or blip_model is None or blip_processor is None:
-        return JSONResponse(
-            status_code=503,
-            content={"error": "BLIP model failed to load. Please check server logs."}
+            content={"error": "BLIP model failed to load. Check server logs."}
         )
 
     try:
@@ -363,47 +458,27 @@ async def caption(file: UploadFile = File(...)):
         )
 
 # ----------------------------
-# Grad-CAM endpoint (multi-class)
+# v1: Grad-CAM endpoint
 # ----------------------------
-@app.post("/gradcam")
+@router.post("/gradcam")
 async def gradcam(file: UploadFile = File(...), top_k: int = TOP_K):
-    # Check if models are ready
-    if models_loading:
-        return JSONResponse(
-            status_code=503,
-            content={"error": "Models are still loading. Please wait and try again in a few moments."}
-        )
-    if not models_loaded or model is None:
-        return JSONResponse(
-            status_code=503,
-            content={"error": "Models failed to load. Please check server logs."}
-        )
+    err = _check_models_ready()
+    if err:
+        return err
 
     try:
         img = Image.open(file.file).convert("RGB")
         img_resized = img.resize(IMG_SIZE)
-        x = np.expand_dims(np.array(img_resized), axis=0)
-        x = preprocess_input(x)
+        x = preprocess_image(img_resized, MODEL_TYPE)
 
-        # Validate model has required attributes
-        if not hasattr(model, 'get_layer'):
-            raise AttributeError("Model does not have 'get_layer' method required for Grad-CAM")
+        if not all(hasattr(model, a) for a in ['get_layer', 'inputs', 'output']):
+            raise AttributeError("Model missing attributes required for Grad-CAM")
 
-        if not hasattr(model, 'inputs'):
-            raise AttributeError("Model does not have 'inputs' attribute required for Grad-CAM")
-
-        if not hasattr(model, 'output'):
-            raise AttributeError("Model does not have 'output' attribute required for Grad-CAM")
-
-        # Grad-CAM model - handle nested layers properly
-        # Check if layer is at top level
+        # Build grad model, handling nested layers (MobileNetV2 inside custom model)
         try:
             last_conv_layer = model.get_layer(last_conv_layer_name)
-            # Direct access - simple case
             grad_model = Model(inputs=model.inputs, outputs=[last_conv_layer.output, model.output])
         except ValueError:
-            # Layer is nested - need to build connection through parent model
-            # Find which layer contains the nested conv layer
             parent_model = None
             parent_idx = None
             for i, layer in enumerate(model.layers):
@@ -417,59 +492,43 @@ async def gradcam(file: UploadFile = File(...), top_k: int = TOP_K):
                         continue
 
             if parent_model is None:
-                raise ValueError(f"Could not find layer '{last_conv_layer_name}' in model or nested layers")
+                raise ValueError(f"Could not find layer '{last_conv_layer_name}'")
 
-            # Get the nested conv layer
             nested_conv_layer = parent_model.get_layer(last_conv_layer_name)
-
-            # Create a model from parent's input that outputs BOTH conv output AND parent's final output
             parent_with_conv = Model(
                 inputs=parent_model.input,
                 outputs=[nested_conv_layer.output, parent_model.output]
             )
-
-            # Now build the full model: apply parent_with_conv to top-level input
             x_in = model.inputs[0]
             conv_output, parent_output = parent_with_conv(x_in)
-
-            # Apply remaining layers (after parent_model) to parent_output
             final_output = parent_output
             for layer in model.layers[parent_idx + 1:]:
                 final_output = layer(final_output)
-
-            # Create grad_model with both outputs from the same forward pass
             grad_model = Model(inputs=model.inputs, outputs=[conv_output, final_output])
 
         preds = model.predict(x)[0]
         top_indices = preds.argsort()[-top_k:][::-1]
-
         gradcam_results = []
 
         for idx in top_indices:
-            # Compute Grad-CAM
             with tf.GradientTape() as tape:
                 conv_outputs, predictions = grad_model(x)
                 loss = predictions[:, idx]
 
             grads = tape.gradient(loss, conv_outputs)
-
             if grads is None:
-                print(f"Warning: Gradient is None for class {idx}, skipping")
                 continue
 
-            pooled_grads = tf.reduce_mean(grads, axis=(0,1,2))
-            conv_outputs = conv_outputs[0]
-            heatmap = conv_outputs @ pooled_grads[..., tf.newaxis]
+            pooled_grads = tf.reduce_mean(grads, axis=(0, 1, 2))
+            conv_out = conv_outputs[0]
+            heatmap = conv_out @ pooled_grads[..., tf.newaxis]
             heatmap = tf.squeeze(heatmap)
-            heatmap = tf.maximum(heatmap, 0) / (tf.reduce_max(heatmap) + 1e-8)  # Add epsilon to avoid division by zero
+            heatmap = tf.maximum(heatmap, 0) / (tf.reduce_max(heatmap) + 1e-8)
             heatmap = heatmap.numpy()
 
-            # Apply colormap
             heatmap_colored = cm.jet(heatmap)[:, :, :3]
             heatmap_colored = np.uint8(255 * heatmap_colored)
             heatmap_img = Image.fromarray(heatmap_colored).resize(IMG_SIZE)
-
-            # Overlay original image
             overlay = Image.blend(img_resized, heatmap_img, alpha=0.4)
             buffer = io.BytesIO()
             overlay.save(buffer, format="PNG")
@@ -491,18 +550,177 @@ async def gradcam(file: UploadFile = File(...), top_k: int = TOP_K):
         )
 
 # ----------------------------
-# Human feedback endpoint
+# v1: SHAP endpoint
 # ----------------------------
-@app.post("/feedback")
+@router.post("/shap")
+async def shap_explain(file: UploadFile = File(...)):
+    if not ENABLE_SHAP:
+        return JSONResponse(
+            status_code=503,
+            content={"error": "SHAP is disabled (ENABLE_SHAP=false)."}
+        )
+    if not SHAP_AVAILABLE:
+        return JSONResponse(
+            status_code=503,
+            content={"error": "SHAP package not installed. Add 'shap' to requirements.txt."}
+        )
+    err = _check_models_ready()
+    if err:
+        return err
+    if shap_explainer is None:
+        return JSONResponse(
+            status_code=503,
+            content={"error": "SHAP explainer not initialized. Check server logs."}
+        )
+
+    try:
+        img = Image.open(file.file).convert("RGB")
+        x = preprocess_image(img, MODEL_TYPE)
+
+        # Compute SHAP values for top predicted class
+        shap_values = shap_explainer.shap_values(x)
+
+        raw_preds = model(x, training=False).numpy()[0]
+        top_class_idx = int(raw_preds.argsort()[-1])
+
+        # Extract SHAP values for top class
+        if isinstance(shap_values, list):
+            shap_img = shap_values[top_class_idx][0]  # [H, W, C]
+        else:
+            shap_img = shap_values[0]
+
+        # Aggregate across channels and normalize
+        shap_agg = np.abs(shap_img).mean(axis=-1)  # [H, W]
+        shap_norm = (shap_agg - shap_agg.min()) / (shap_agg.max() - shap_agg.min() + 1e-8)
+
+        # RdBu_r colormap: red = important regions, blue = suppressing regions
+        heatmap_colored = cm.RdBu_r(1 - shap_norm)[:, :, :3]
+        heatmap_colored = np.uint8(255 * heatmap_colored)
+        heatmap_img = Image.fromarray(heatmap_colored).resize(IMG_SIZE)
+        original = img.resize(IMG_SIZE)
+        overlay = Image.blend(original, heatmap_img, alpha=0.5)
+
+        buffer = io.BytesIO()
+        overlay.save(buffer, format="PNG")
+        shap_b64 = base64.b64encode(buffer.getvalue()).decode("utf-8")
+
+        top_class_name = LABEL_MAP.get(str(top_class_idx), f"Class {top_class_idx}")
+        top_confidence = float(apply_temperature_scaling(raw_preds, TEMPERATURE)[top_class_idx])
+
+        # MLflow logging
+        if MLFLOW_AVAILABLE:
+            try:
+                with mlflow.start_run(run_name="shap"):
+                    mlflow.log_param("model_type", MODEL_TYPE)
+                    mlflow.log_metric("top1_confidence", top_confidence)
+                    mlflow.set_tag("endpoint", "shap")
+                    mlflow.set_tag("top1_class", top_class_name)
+            except Exception:
+                pass
+
+        return {
+            "shap_plot_base64": f"data:image/png;base64,{shap_b64}",
+            "top_class": top_class_name,
+            "top_class_idx": top_class_idx,
+            "top_confidence": top_confidence,
+            "explanation": "Red regions contribute most to this prediction. Blue regions suppress it.",
+            "method": "SHAP GradientExplainer",
+        }
+
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={"error": str(e), "trace": traceback.format_exc()},
+        )
+
+# ----------------------------
+# v1: CLIP zero-shot endpoint
+# ----------------------------
+@router.post("/clip")
+async def clip_classify(
+    file: UploadFile = File(...),
+    labels: str = Form(...)  # JSON array: '["cat", "dog", "car"]'
+):
+    if not ENABLE_CLIP:
+        return JSONResponse(
+            status_code=503,
+            content={"error": "CLIP is disabled (ENABLE_CLIP=false)."}
+        )
+    if clip_model is None or clip_processor is None:
+        return JSONResponse(
+            status_code=503,
+            content={"error": "CLIP model not loaded. Check ENABLE_CLIP and server logs."}
+        )
+
+    try:
+        label_list = json.loads(labels)
+        if not isinstance(label_list, list) or not label_list:
+            return JSONResponse(
+                status_code=400,
+                content={"error": "labels must be a non-empty JSON array of strings."}
+            )
+        if len(label_list) > 20:
+            return JSONResponse(
+                status_code=400,
+                content={"error": "Maximum 20 labels allowed per request."}
+            )
+
+        img = Image.open(file.file).convert("RGB")
+
+        clip_device = next(clip_model.parameters()).device
+        inputs = clip_processor(
+            text=label_list,
+            images=img,
+            return_tensors="pt",
+            padding=True
+        ).to(clip_device)
+
+        with torch.no_grad():
+            outputs = clip_model(**inputs)
+            logits_per_image = outputs.logits_per_image  # [1, num_labels]
+            probs = logits_per_image.softmax(dim=1)[0].cpu().numpy()
+
+        results = sorted(
+            [{"label": label, "score": float(score)} for label, score in zip(label_list, probs)],
+            key=lambda x: x["score"],
+            reverse=True
+        )
+
+        # MLflow logging
+        if MLFLOW_AVAILABLE:
+            try:
+                with mlflow.start_run(run_name="clip"):
+                    mlflow.log_param("num_labels", len(label_list))
+                    mlflow.log_metric("top1_score", results[0]["score"])
+                    mlflow.set_tag("endpoint", "clip")
+                    mlflow.set_tag("top1_label", results[0]["label"])
+            except Exception:
+                pass
+
+        return {
+            "results": results,
+            "model": "CLIP ViT-B/32",
+            "zero_shot": True,
+        }
+
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={"error": str(e), "trace": traceback.format_exc()},
+        )
+
+# ----------------------------
+# v1: Feedback endpoint (with active learning fields)
+# ----------------------------
+@router.post("/feedback")
 async def feedback(file: UploadFile = File(...), entry: str = Form(...)):
     try:
-        # Save image
         img_path = FEEDBACK_DIR / file.filename
         with open(img_path, "wb") as f:
             f.write(await file.read())
 
-        # Save feedback JSON
         entry_data = json.loads(entry) if isinstance(entry, str) else entry
+
         feedback_log_path = FEEDBACK_DIR / "feedback_log.json"
         if feedback_log_path.exists():
             with open(feedback_log_path, "r") as f:
@@ -514,6 +732,10 @@ async def feedback(file: UploadFile = File(...), entry: str = Form(...)):
             "filename": file.filename,
             "feedback": entry_data.get("feedback"),
             "rating": entry_data.get("rating"),
+            "active_learning_flag": entry_data.get("active_learning_flag", False),
+            "flag_reason": entry_data.get("flag_reason", "user_submitted"),
+            "top1_confidence": entry_data.get("top1_confidence"),
+            "predicted_class": entry_data.get("predicted_class"),
         })
 
         with open(feedback_log_path, "w") as f:
@@ -526,3 +748,92 @@ async def feedback(file: UploadFile = File(...), entry: str = Form(...)):
             status_code=500,
             content={"error": str(e), "trace": traceback.format_exc()},
         )
+
+# ----------------------------
+# v1: Active learning summary
+# ----------------------------
+@router.get("/active-learning/summary")
+async def active_learning_summary():
+    try:
+        feedback_log_path = FEEDBACK_DIR / "feedback_log.json"
+        if not feedback_log_path.exists():
+            return {"total": 0, "flagged": 0, "flag_rate": 0.0, "flagged_samples": []}
+
+        with open(feedback_log_path, "r") as f:
+            log = json.load(f)
+
+        flagged = [e for e in log if e.get("active_learning_flag")]
+        return {
+            "total": len(log),
+            "flagged": len(flagged),
+            "flag_rate": round(len(flagged) / max(len(log), 1), 3),
+            "flagged_samples": flagged[-10:],  # Last 10 flagged entries
+        }
+
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+# ----------------------------
+# v1: MLflow recent runs
+# ----------------------------
+@router.get("/mlflow/recent-runs")
+async def get_recent_runs(limit: int = 10):
+    if not MLFLOW_AVAILABLE:
+        return JSONResponse(
+            status_code=503,
+            content={"error": "MLflow not installed. Add 'mlflow' to requirements.txt."}
+        )
+    try:
+        runs = mlflow.search_runs(
+            experiment_names=[MLFLOW_EXPERIMENT_NAME],
+            order_by=["start_time DESC"],
+            max_results=limit,
+            output_format="list"
+        )
+        formatted = []
+        for run in runs:
+            formatted.append({
+                "run_id": run.info.run_id[:8],
+                "endpoint": run.data.tags.get("endpoint", "unknown"),
+                "top1_class": (
+                    run.data.tags.get("top1_class") or
+                    run.data.tags.get("top1_label", "")
+                ),
+                "top1_confidence": (
+                    run.data.metrics.get("top1_confidence") or
+                    run.data.metrics.get("top1_score")
+                ),
+                "model_type": run.data.params.get("model_type", "imagenet"),
+                "started_ms": run.info.start_time,
+            })
+        return {"runs": formatted, "total": len(formatted)}
+
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={"error": str(e), "trace": traceback.format_exc()},
+        )
+
+# ----------------------------
+# Register versioned router
+# ----------------------------
+app.include_router(router)
+
+# ----------------------------
+# Legacy unversioned routes (backward compatibility)
+# ----------------------------
+@app.post("/predict")
+async def predict_legacy(file: UploadFile = File(...)):
+    return await predict(file)
+
+@app.post("/caption")
+async def caption_legacy(file: UploadFile = File(...)):
+    return await caption(file)
+
+@app.post("/gradcam")
+async def gradcam_legacy(file: UploadFile = File(...), top_k: int = TOP_K):
+    return await gradcam(file, top_k)
+
+@app.post("/feedback")
+async def feedback_legacy(file: UploadFile = File(...), entry: str = Form(...)):
+    return await feedback(file, entry)

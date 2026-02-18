@@ -1,0 +1,48 @@
+{
+  "model_name": "efficientnetb0_isic_medical",
+  "version": "v1.0_isic2020",
+  "architecture": "EfficientNetB0 (fine-tuned on ISIC 2020)",
+  "trained_on": "ISIC 2020 Skin Lesion Dataset (binary classification)",
+  "last_updated": "2026-02-17",
+  "temperature": 1.2,
+  "num_classes": 2,
+  "classes": {
+    "0": "Benign",
+    "1": "Melanoma"
+  },
+  "class_descriptions": {
+    "0": "Benign skin lesion — no malignancy detected",
+    "1": "Melanoma — malignant skin lesion requiring clinical evaluation"
+  },
+  "input_shape": [224, 224, 3],
+  "training": {
+    "dataset": "ISIC 2020 Challenge",
+    "dataset_url": "https://challenge2020.isic-archive.com/",
+    "total_images": 33126,
+    "melanoma_images": 584,
+    "benign_images": 32542,
+    "class_imbalance_ratio": "1:55 (melanoma:benign)",
+    "augmentation": [
+      "random_horizontal_flip",
+      "random_vertical_flip",
+      "random_rotation_30deg",
+      "random_brightness_contrast",
+      "class_weight_balancing"
+    ],
+    "optimizer": "Adam",
+    "learning_rate_phase1": 0.001,
+    "learning_rate_phase2": 0.00001,
+    "epochs_phase1": 10,
+    "epochs_phase2": 20,
+    "batch_size": 32,
+    "early_stopping_patience": 5
+  },
+  "performance": {
+    "note": "Placeholder metrics - update after training",
+    "val_accuracy": null,
+    "val_auc": null,
+    "val_sensitivity": null,
+    "val_specificity": null
+  },
+  "disclaimer": "This model is for research and demonstration purposes only. It is NOT a certified medical device and must NOT be used for clinical diagnosis. Always consult a qualified dermatologist for skin lesion evaluation."
+}
